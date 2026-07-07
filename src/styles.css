@@ -1,0 +1,62 @@
+html,
+body {
+  margin: 0;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  background: #f6f4ef;
+}
+[contenteditable] {
+  outline: none;
+}
+::placeholder {
+  color: #b8b2a7;
+}
+.ptm-scroll::-webkit-scrollbar {
+  width: 10px;
+}
+.ptm-scroll::-webkit-scrollbar-thumb {
+  background: #e0dcd3;
+  border-radius: 20px;
+  border: 3px solid #fff;
+}
+
+/* Hover/focus states (ports of the template's style-hover / style-focus attributes) */
+.hv-bg:hover {
+  background: #f4f1ea;
+}
+.hv-red:hover {
+  background: #faf0ee;
+}
+.hv-blue:hover {
+  background: #eef2fd;
+}
+.hv-grip:hover {
+  color: #8f887c;
+  background: #f4f1ea;
+}
+.hv-addtag:hover {
+  color: #8f887c;
+  border-color: #b3ada2;
+}
+.hv-op:hover {
+  opacity: 1;
+}
+.hv-dark:hover {
+  color: #22201d;
+}
+.hv-underline:hover {
+  text-decoration: underline;
+}
+.fc-border:focus {
+  border-color: #bdb7ab;
+}
+.fc-borderbg:focus {
+  border-color: #bdb7ab;
+  background: #fff;
+}
+.fc-bg:focus {
+  background: #f4f1ea;
+}

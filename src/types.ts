@@ -24,6 +24,15 @@ export interface TagColor {
   br: string;
 }
 
+/** Precomputed view-model for one tag row in the filter popover. */
+export interface TagFilterRowVM {
+  name: string;
+  count: number;
+  active: boolean;
+  checkStyle: string;
+  dotStyle: string;
+}
+
 /** Precomputed view-model for one task row (style strings are parsed by css()). */
 export interface RowVM {
   id: string;

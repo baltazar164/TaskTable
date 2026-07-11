@@ -1,9 +1,10 @@
 import React from 'react';
-import type { Task, TagInfo, GhConfig, TagColor, RowVM } from './types';
+import type { Task, TagInfo, GhConfig, TagColor, RowVM, TagFilterRowVM } from './types';
 import * as store from './storage';
 import { apiUrl, ghHeaders, decodeContent, encodeContent, diagnose404 } from './github';
 import { css } from './lib/css';
 import TaskRow from './components/TaskRow';
+import FilterDropdown from './components/FilterDropdown';
 import AddTaskModal from './components/AddTaskModal';
 import TaskDetailModal from './components/TaskDetailModal';
 import SyncModal from './components/SyncModal';
@@ -28,6 +29,8 @@ interface AppState {
   tasks: Task[];
   tags: TagInfo[];
   search: string;
+  filterTags: string[];
+  filterPopoverOpen: boolean;
   dragId: string | null;
   tagInputId: string | null;
   tagQuery: string;
@@ -77,6 +80,8 @@ export default class App extends React.Component<Record<string, never>, AppState
       tasks,
       tags,
       search: '',
+      filterTags: [],
+      filterPopoverOpen: false,
       dragId: null,
       tagInputId: null,
       tagQuery: '',
@@ -269,6 +274,18 @@ export default class App extends React.Component<Record<string, never>, AppState
   // ---- basic mutations ----
   onSearch = (e: React.ChangeEvent<HTMLInputElement>) => this.setState({ search: e.target.value });
   clearSearch = () => this.setState({ search: '' });
+  toggleFilterTag(name: string) {
+    this.setState((s) => ({
+      filterTags: s.filterTags.includes(name) ? s.filterTags.filter((x) => x !== name) : [...s.filterTags, name],
+    }));
+  }
+  onToggleFilterChip = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    this.toggleFilterTag(e.currentTarget.dataset.tag || '');
+  };
+  clearFilters = () => this.setState({ filterTags: [] });
+  toggleFilterPopover = () => this.setState((s) => ({ filterPopoverOpen: !s.filterPopoverOpen }));
+  closeFilterPopover = () => this.setState({ filterPopoverOpen: false });
   onToggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     const id = this.rowOf(e);
@@ -536,6 +553,11 @@ export default class App extends React.Component<Record<string, never>, AppState
     if (hideCompleted) visible = visible.filter((t) => !t.done);
     if (q) visible = visible.filter((t) => t.name.toLowerCase().includes(q) || t.tags.some((tg) => tg.includes(q)));
 
+    const activeFilterTags = this.state.filterTags;
+    if (activeFilterTags.length) {
+      visible = visible.filter((t) => activeFilterTags.every((tag) => t.tags.includes(tag)));
+    }
+
     const reg = this.state.tags;
     const tq = (this.state.tagQuery || '').trim().toLowerCase();
 
@@ -601,6 +623,22 @@ export default class App extends React.Component<Record<string, never>, AppState
     const activeTags = reg.filter((g) => !g.archived).map(tagRow);
     const archivedTags = reg.filter((g) => g.archived).map(tagRow);
 
+    const filterableTags = reg.filter((g) => !g.archived && counts(g.name) > 0);
+    const filterChecks: TagFilterRowVM[] = filterableTags.map((g) => {
+      const c = this.tagColor(g.name);
+      const active = activeFilterTags.includes(g.name);
+      return {
+        name: g.name,
+        count: counts(g.name),
+        active,
+        checkStyle: `width:15px;height:15px;border-radius:4px;flex:none;display:grid;place-items:center;border:1.5px solid ${active ? c.fg : '#d8d3c8'};background:${active ? c.fg : '#fff'}`,
+        dotStyle: `width:8px;height:8px;border-radius:50%;flex:none;background:${c.fg}`,
+      };
+    });
+    const filterCount = activeFilterTags.length;
+    const filterBtnStyle = `display:inline-flex;align-items:center;gap:7px;padding:8px 14px;background:${filterCount ? accent + '14' : '#fff'};border:1px solid ${filterCount ? accent : '#e6e2da'};border-radius:10px;font:600 12.5px 'Public Sans',sans-serif;color:${filterCount ? accent : '#4a453d'};cursor:pointer;box-shadow:0 1px 2px rgba(31,29,27,.03)`;
+    const filterBadgeStyle = `display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:20px;background:${accent};color:#fff;font:700 10px 'JetBrains Mono',monospace`;
+
     const total = this.state.tasks.length;
     const done = this.state.tasks.filter((t) => t.done).length;
     const addBtnStyle = `display:inline-flex;align-items:center;gap:6px;padding:9px 16px;background:${accent};color:#fff;border:none;border-radius:11px;font:600 13px 'Public Sans',sans-serif;cursor:pointer;white-space:nowrap;box-shadow:0 1px 2px rgba(31,29,27,.1)`;
@@ -610,7 +648,11 @@ export default class App extends React.Component<Record<string, never>, AppState
     const syncDotStyle = `width:8px;height:8px;border-radius:50%;flex:none;background:${this.state.ghToken ? '#0d8f6f' : '#cbc6bb'}`;
     const syncStatusColor = this.state.syncStatus === 'error' ? '#b0432f' : this.state.syncStatus === 'ok' ? '#0d8f6f' : '#a49e93';
     const lastSyncLabel = this.state.lastSync ? 'Last synced ' + new Date(this.state.lastSync).toLocaleString() : 'Not synced yet';
-    const emptyLabel = q ? 'No tasks match your search.' : 'No tasks yet — add one below.';
+    const emptyLabel = q
+      ? 'No tasks match your search.'
+      : filterCount
+        ? 'No tasks match the selected filters.'
+        : 'No tasks yet — add one below.';
 
     const ghostHeaderBtn = css("display:inline-flex;align-items:center;gap:7px;padding:8px 14px;background:#fff;border:1px solid #e6e2da;border-radius:10px;font:600 12.5px 'Public Sans',sans-serif;color:#4a453d;cursor:pointer;box-shadow:0 1px 2px rgba(31,29,27,.03)");
     const footLinkStyle = css("border:none;background:none;cursor:pointer;font:500 12px 'JetBrains Mono',monospace;color:#a49e93;text-decoration:underline;text-underline-offset:2px");
@@ -622,6 +664,18 @@ export default class App extends React.Component<Record<string, never>, AppState
             <h1 style={css('margin:0;font-size:24px;font-weight:800;letter-spacing:-.025em;white-space:nowrap')}>My Tasks</h1>
             <span style={css("font:500 12px 'JetBrains Mono',monospace;color:#a49e93;padding-bottom:2px")}>{`${total} task${total === 1 ? '' : 's'} · ${done} done`}</span>
             <div style={css('margin-left:auto;display:flex;gap:9px')}>
+              <FilterDropdown
+                open={this.state.filterPopoverOpen}
+                filterChecks={filterChecks}
+                filterCount={filterCount}
+                filterBtnStyle={filterBtnStyle}
+                filterBadgeStyle={filterBadgeStyle}
+                toggleFilterPopover={this.toggleFilterPopover}
+                closeFilterPopover={this.closeFilterPopover}
+                onToggleFilterChip={this.onToggleFilterChip}
+                clearFilters={this.clearFilters}
+                stop={this.stop}
+              />
               <button onClick={this.openSync} className="hv-bg" style={ghostHeaderBtn}>
                 <span style={css(syncDotStyle)}></span>Sync
               </button>

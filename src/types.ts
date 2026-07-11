@@ -3,6 +3,7 @@ export interface Task {
   name: string;
   tags: string[];
   done: boolean;
+  description?: string;
 }
 
 export interface TagInfo {
@@ -38,6 +39,7 @@ export interface RowVM {
   gripStyle: string;
   tagWrapStyle: string;
   checkStyle: string;
+  detailStyle: string;
   nameStyle: string;
   tagPills: { name: string; style: string }[];
 }

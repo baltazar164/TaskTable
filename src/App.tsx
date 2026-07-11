@@ -5,6 +5,7 @@ import { apiUrl, ghHeaders, decodeContent, encodeContent, diagnose404 } from './
 import { css } from './lib/css';
 import TaskRow from './components/TaskRow';
 import AddTaskModal from './components/AddTaskModal';
+import TaskDetailModal from './components/TaskDetailModal';
 import SyncModal from './components/SyncModal';
 import ManageTags from './components/ManageTags';
 import type { TagRowVM } from './components/ManageTags';
@@ -45,6 +46,10 @@ interface AppState {
   syncStatus: '' | 'busy' | 'ok' | 'error';
   syncMsg: string;
   narrow: boolean;
+  detailOpen: boolean;
+  detailId: string | null;
+  detailNameDraft: string;
+  detailDescDraft: string;
 }
 
 export default class App extends React.Component<Record<string, never>, AppState> {
@@ -90,6 +95,10 @@ export default class App extends React.Component<Record<string, never>, AppState
       syncStatus: '',
       syncMsg: '',
       narrow: typeof window !== 'undefined' && window.innerWidth < 560,
+      detailOpen: false,
+      detailId: null,
+      detailNameDraft: '',
+      detailDescDraft: '',
     };
     this._onResize = () => {
       const n = window.innerWidth < 560;
@@ -294,6 +303,27 @@ export default class App extends React.Component<Record<string, never>, AppState
     } else if (e.key === 'Escape') {
       this.closeModal();
     }
+  };
+
+  // ---- task detail modal ----
+  onOpenDetail = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.stopPropagation();
+    const id = this.rowOf(e);
+    const t = this.state.tasks.find((t) => t.id === id);
+    if (!t) return;
+    this.setState({ detailOpen: true, detailId: id, detailNameDraft: t.name, detailDescDraft: t.description || '' });
+  };
+  closeDetail = () => this.setState({ detailOpen: false, detailId: null });
+  onDetailNameInput = (e: React.ChangeEvent<HTMLInputElement>) => this.setState({ detailNameDraft: e.target.value });
+  onDetailDescInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => this.setState({ detailDescDraft: e.target.value });
+  saveDetail = () => {
+    const id = this.state.detailId;
+    const name = this.state.detailNameDraft.trim();
+    if (!name) return;
+    this.commit(
+      this.state.tasks.map((t) => (t.id === id ? { ...t, name, description: this.state.detailDescDraft } : t)),
+      { detailOpen: false, detailId: null },
+    );
   };
 
   onNameKey = (e: React.KeyboardEvent<HTMLSpanElement>) => {
@@ -530,13 +560,13 @@ export default class App extends React.Component<Record<string, never>, AppState
         createLabel: tq,
         emptySuggest: open && avail.length === 0 && !canCreate,
         rowStyle:
-          `display:grid;grid-template-columns:${narrow ? 'minmax(0,1fr) 22px 24px' : '24px 22px minmax(0,1fr) auto'};align-items:center;gap:${narrow ? '4px 12px' : '9px'};padding:${pad};cursor:pointer;` +
+          `display:grid;grid-template-columns:${narrow ? 'minmax(0,1fr) 22px 22px 24px' : '24px 22px 22px minmax(0,1fr) auto'};align-items:center;gap:${narrow ? '4px 12px' : '9px'};padding:${pad};cursor:pointer;` +
           `border-bottom:1px solid #f1eee8;position:relative;background:${dragging ? '#fff' : selected ? accent + '14' : 'transparent'};` +
           `box-shadow:${dragging ? '0 10px 26px rgba(31,29,27,.18)' : selected ? 'inset 3px 0 0 ' + accent : 'none'};border-radius:${dragging ? '9px' : '0'};` +
           `z-index:${dragging ? '5' : 'auto'};transition:box-shadow .12s ease,background .12s ease,border-radius .12s ease`,
         gripStyle:
           `display:inline-flex;align-items:center;justify-content:center;cursor:grab;color:#cbc6bb;touch-action:none;padding:5px 3px;border-radius:5px;margin:-5px 0` +
-          (narrow ? ';grid-column:3;grid-row:1;justify-self:center' : ''),
+          (narrow ? ';grid-column:4;grid-row:1;justify-self:center' : ''),
         tagWrapStyle: narrow
           ? 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-start;grid-column:1 / -1;grid-row:2;padding-bottom:1px'
           : 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end',
@@ -545,6 +575,9 @@ export default class App extends React.Component<Record<string, never>, AppState
           `background:${t.done ? accent : '#fff'};color:#fff;font-size:11px;line-height:1;display:grid;place-items:center;` +
           `cursor:pointer;padding:0;transition:all .12s` +
           (narrow ? ';grid-column:2;grid-row:1;justify-self:center' : ''),
+        detailStyle:
+          `display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.6px solid #d8d3c8;border-radius:5px;background:#fff;color:#948d80;cursor:pointer;padding:0;font-size:11px;line-height:1;transition:all .12s` +
+          (narrow ? ';grid-column:3;grid-row:1;justify-self:center' : ''),
         nameStyle:
           `font:${nameFont};padding:2px 4px;margin:-2px 0;border-radius:5px;min-width:30px;cursor:text;` +
           (t.done ? 'text-decoration:line-through;color:#aca699' : 'color:#22201d') +
@@ -615,8 +648,8 @@ export default class App extends React.Component<Record<string, never>, AppState
           </div>
 
           <div style={css('background:#fff;border:1px solid #e6e2da;border-radius:13px;overflow:hidden;box-shadow:0 1px 3px rgba(31,29,27,.05)')}>
-            <div style={css("display:grid;grid-template-columns:24px 22px minmax(0,1fr) auto;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid #efece5;font:600 10px 'JetBrains Mono',monospace;color:#b3ada2;text-transform:uppercase;letter-spacing:.07em")}>
-              <span></span><span></span><span>Task</span><span style={css('text-align:right')}>Tags</span>
+            <div style={css("display:grid;grid-template-columns:24px 22px 22px minmax(0,1fr) auto;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid #efece5;font:600 10px 'JetBrains Mono',monospace;color:#b3ada2;text-transform:uppercase;letter-spacing:.07em")}>
+              <span></span><span></span><span></span><span>Task</span><span style={css('text-align:right')}>Tags</span>
             </div>
 
             <div ref={this.setListEl} className="ptm-scroll">
@@ -635,6 +668,7 @@ export default class App extends React.Component<Record<string, never>, AppState
                   onPickSuggestion={this.onPickSuggestion}
                   onCreateTag={this.onCreateTag}
                   onAddTagClick={this.onAddTagClick}
+                  onOpenDetail={this.onOpenDetail}
                   stop={this.stop}
                 />
               ))}
@@ -718,6 +752,19 @@ export default class App extends React.Component<Record<string, never>, AppState
             onModalInput={this.onModalInput}
             onModalKey={this.onModalKey}
             submitModal={this.submitModal}
+          />
+        )}
+
+        {this.state.detailOpen && (
+          <TaskDetailModal
+            detailNameDraft={this.state.detailNameDraft}
+            detailDescDraft={this.state.detailDescDraft}
+            modalSubmitStyle={modalSubmitStyle}
+            closeDetail={this.closeDetail}
+            stop={this.stop}
+            onDetailNameInput={this.onDetailNameInput}
+            onDetailDescInput={this.onDetailDescInput}
+            saveDetail={this.saveDetail}
           />
         )}
       </div>

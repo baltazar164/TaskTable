@@ -13,6 +13,7 @@ export interface TaskRowHandlers {
   onPickSuggestion: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onCreateTag: (e: React.MouseEvent<HTMLButtonElement>) => void;
   onAddTagClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
+  onOpenDetail: (e: React.MouseEvent<HTMLButtonElement>) => void;
   stop: (e: React.SyntheticEvent) => void;
 }
 
@@ -36,6 +37,8 @@ export default function TaskRow({ row, tagQuery, ...h }: Props) {
       <button onClick={h.onToggle} style={css(row.checkStyle)}>
         {row.done && <span>✓</span>}
       </button>
+
+      <button onClick={h.onOpenDetail} title="Open task" className="hv-addtag" style={css(row.detailStyle)}>⤢</button>
 
       <span
         contentEditable

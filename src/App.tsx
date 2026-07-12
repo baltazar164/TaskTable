@@ -641,20 +641,20 @@ export default class App extends React.Component<Record<string, never>, AppState
           `display:inline-flex;align-items:center;justify-content:center;cursor:grab;color:#cbc6bb;touch-action:none;padding:5px 3px;border-radius:5px;margin:-5px 0` +
           (narrow ? ';grid-column:4;grid-row:1;justify-self:center' : ''),
         tagWrapStyle: narrow
-          ? 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-start;grid-column:1 / -1;grid-row:2;padding-bottom:1px'
+          ? 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-start;grid-column:1 / 3;grid-row:2;padding-top:2px'
           : 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end',
         checkStyle:
           `width:17px;height:17px;border:1.6px solid ${t.done ? accent : '#cdc7bc'};border-radius:5px;` +
           `background:${t.done ? accent : '#fff'};color:#fff;font-size:11px;line-height:1;display:grid;place-items:center;` +
           `cursor:pointer;padding:0;transition:all .12s` +
-          (narrow ? ';grid-column:2;grid-row:1;justify-self:center' : ''),
+          (narrow ? ';grid-column:4;grid-row:2;justify-self:center' : ''),
         detailStyle:
           `display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.6px solid #d8d3c8;border-radius:5px;background:#fff;color:#948d80;cursor:pointer;padding:0;font-size:11px;line-height:1;transition:all .12s` +
-          (narrow ? ';grid-column:3;grid-row:1;justify-self:center' : ''),
+          (narrow ? ';grid-column:3;grid-row:2;justify-self:center' : ''),
         nameStyle:
           `font:${nameFont};padding:2px 4px;margin:-2px 0;border-radius:5px;min-width:30px;cursor:text;` +
           (t.done ? 'text-decoration:line-through;color:#aca699' : 'color:#22201d') +
-          (narrow ? ';grid-column:1;grid-row:1' : ''),
+          (narrow ? ';grid-column:1 / 4;grid-row:1' : ''),
         tagPills: t.tags.map((name) => {
           const c = this.tagColor(name);
           return {

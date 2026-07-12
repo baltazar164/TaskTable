@@ -34,11 +34,11 @@ export default function TaskRow({ row, tagQuery, ...h }: Props) {
         </span>
       </span>
 
+      <button onClick={h.onOpenDetail} title="Open task" className="hv-addtag" style={css(row.detailStyle)}>⤢</button>
+
       <button onClick={h.onToggle} style={css(row.checkStyle)}>
         {row.done && <span>✓</span>}
       </button>
-
-      <button onClick={h.onOpenDetail} title="Open task" className="hv-addtag" style={css(row.detailStyle)}>⤢</button>
 
       <span
         contentEditable

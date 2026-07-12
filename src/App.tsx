@@ -17,6 +17,10 @@ const ACCENT = '#c1762a';
 const COMPACT = true;
 const HIDE_COMPLETED = false;
 
+// Built-in pseudo-tag for filtering tasks that have no tags. Never a real tag
+// (real tags are always lowercased), so it can live in filterTags without collision.
+const UNTAGGED = 'Untagged';
+
 const PALETTE: TagColor[] = [
   { fg: '#3a5ccc', bg: '#eef2fd', br: '#cdd8f7' },
   { fg: '#0d8f6f', bg: '#e8f6f0', br: '#c4e8db' },
@@ -605,8 +609,16 @@ export default class App extends React.Component<Record<string, never>, AppState
     if (q) visible = visible.filter((t) => t.name.toLowerCase().includes(q) || t.tags.some((tg) => tg.includes(q)));
 
     const activeFilterTags = this.state.filterTags;
+    const untaggedFilterActive = activeFilterTags.includes(UNTAGGED);
+    const realFilterTags = activeFilterTags.filter((x) => x !== UNTAGGED);
     if (activeFilterTags.length) {
-      visible = visible.filter((t) => activeFilterTags.every((tag) => t.tags.includes(tag)));
+      // Real tag filters AND-combine; the "Untagged" pseudo-tag OR-combines with them:
+      // a task shows if it matches every selected real tag, or (Untagged active) it has no tags.
+      visible = visible.filter((t) => {
+        const matchesReal = realFilterTags.length > 0 && realFilterTags.every((tag) => t.tags.includes(tag));
+        const matchesUntagged = untaggedFilterActive && t.tags.length === 0;
+        return matchesReal || matchesUntagged;
+      });
     }
 
     const reg = this.state.tags;
@@ -686,6 +698,19 @@ export default class App extends React.Component<Record<string, never>, AppState
         dotStyle: `width:8px;height:8px;border-radius:50%;flex:none;background:${c.fg}`,
       };
     });
+    // "Untagged" pseudo-tag: prepended as the first filter option, shown only when
+    // some task has no tags. Deliberately styled apart from real tags (neutral grey,
+    // hollow dashed dot).
+    const untaggedCount = this.state.tasks.filter((t) => t.tags.length === 0).length;
+    if (untaggedCount > 0) {
+      filterChecks.unshift({
+        name: UNTAGGED,
+        count: untaggedCount,
+        active: untaggedFilterActive,
+        checkStyle: `width:15px;height:15px;border-radius:4px;flex:none;display:grid;place-items:center;border:1.5px solid ${untaggedFilterActive ? '#6b655b' : '#d8d3c8'};background:${untaggedFilterActive ? '#6b655b' : '#fff'}`,
+        dotStyle: 'width:8px;height:8px;border-radius:50%;flex:none;border:1.4px dashed #b3ada2;background:transparent',
+      });
+    }
     const filterCount = activeFilterTags.length;
     const filterBtnStyle = `display:inline-flex;align-items:center;gap:7px;padding:8px 14px;background:${filterCount ? accent + '14' : '#fff'};border:1px solid ${filterCount ? accent : '#e6e2da'};border-radius:10px;font:600 12.5px 'Public Sans',sans-serif;color:${filterCount ? accent : '#4a453d'};cursor:pointer;box-shadow:0 1px 2px rgba(31,29,27,.03)`;
     const filterBadgeStyle = `display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:20px;background:${accent};color:#fff;font:700 10px 'JetBrains Mono',monospace`;

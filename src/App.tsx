@@ -35,6 +35,7 @@ interface AppState {
   tags: TagInfo[];
   search: string;
   filterTags: string[];
+  excludeTags: string[];
   filterPopoverOpen: boolean;
   savedFilters: SavedFilter[];
   saveFilterOpen: boolean;
@@ -89,6 +90,7 @@ export default class App extends React.Component<Record<string, never>, AppState
       tags,
       search: '',
       filterTags: [],
+      excludeTags: [],
       filterPopoverOpen: false,
       savedFilters: store.loadSavedFilters() || [],
       saveFilterOpen: false,
@@ -285,16 +287,24 @@ export default class App extends React.Component<Record<string, never>, AppState
   // ---- basic mutations ----
   onSearch = (e: React.ChangeEvent<HTMLInputElement>) => this.setState({ search: e.target.value });
   clearSearch = () => this.setState({ search: '' });
-  toggleFilterTag(name: string) {
-    this.setState((s) => ({
-      filterTags: s.filterTags.includes(name) ? s.filterTags.filter((x) => x !== name) : [...s.filterTags, name],
-    }));
+  // Tri-state cycle for a tag: none -> "show only" -> "hide" -> none.
+  cycleFilterTag(name: string) {
+    this.setState((s) => {
+      const isInc = s.filterTags.includes(name);
+      const isExc = s.excludeTags.includes(name);
+      let inc = s.filterTags.filter((x) => x !== name);
+      let exc = s.excludeTags.filter((x) => x !== name);
+      if (!isInc && !isExc) inc = [...inc, name]; // none -> show only
+      else if (isInc) exc = [...exc, name]; // show only -> hide
+      // hide -> none (already removed)
+      return { filterTags: inc, excludeTags: exc };
+    });
   }
   onToggleFilterChip = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
-    this.toggleFilterTag(e.currentTarget.dataset.tag || '');
+    this.cycleFilterTag(e.currentTarget.dataset.tag || '');
   };
-  clearFilters = () => this.setState({ filterTags: [] });
+  clearFilters = () => this.setState({ filterTags: [], excludeTags: [] });
   toggleFilterPopover = () => this.setState((s) => ({ filterPopoverOpen: !s.filterPopoverOpen }));
   closeFilterPopover = () => this.setState({ filterPopoverOpen: false });
 
@@ -316,7 +326,7 @@ export default class App extends React.Component<Record<string, never>, AppState
   confirmSaveFilter = () => {
     const name = this.state.saveFilterName.trim();
     if (!name) return;
-    const entry: SavedFilter = { id: store.uid(), name, tags: [...this.state.filterTags], search: this.state.search };
+    const entry: SavedFilter = { id: store.uid(), name, tags: [...this.state.filterTags], exclude: [...this.state.excludeTags], search: this.state.search };
     const list = [...this.state.savedFilters, entry];
     store.saveSavedFilters(list);
     this.setState({ savedFilters: list, saveFilterOpen: false, saveFilterName: '' });
@@ -326,12 +336,15 @@ export default class App extends React.Component<Record<string, never>, AppState
     const entry = this.state.savedFilters.find((f) => f.id === id);
     if (!entry) return;
     const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
-    const active = sameSet(entry.tags || [], this.state.filterTags) && (entry.search || '') === this.state.search;
+    const active =
+      sameSet(entry.tags || [], this.state.filterTags) &&
+      sameSet(entry.exclude || [], this.state.excludeTags) &&
+      (entry.search || '') === this.state.search;
     if (active) {
-      this.setState({ filterTags: [], search: '', filterPopoverOpen: false });
+      this.setState({ filterTags: [], excludeTags: [], search: '', filterPopoverOpen: false });
       return;
     }
-    this.setState({ filterTags: [...entry.tags], search: entry.search || '', filterPopoverOpen: false });
+    this.setState({ filterTags: [...entry.tags], excludeTags: [...(entry.exclude || [])], search: entry.search || '', filterPopoverOpen: false });
   };
   onDeleteSavedFilter = (e: React.MouseEvent<HTMLSpanElement>) => {
     e.stopPropagation();
@@ -609,6 +622,7 @@ export default class App extends React.Component<Record<string, never>, AppState
     if (q) visible = visible.filter((t) => t.name.toLowerCase().includes(q) || t.tags.some((tg) => tg.includes(q)));
 
     const activeFilterTags = this.state.filterTags;
+    const excludeTags = this.state.excludeTags;
     const untaggedFilterActive = activeFilterTags.includes(UNTAGGED);
     const realFilterTags = activeFilterTags.filter((x) => x !== UNTAGGED);
     if (activeFilterTags.length) {
@@ -619,6 +633,13 @@ export default class App extends React.Component<Record<string, never>, AppState
         const matchesUntagged = untaggedFilterActive && t.tags.length === 0;
         return matchesReal || matchesUntagged;
       });
+    }
+    // Exclude ("hide") removes any task carrying an excluded tag; the "Untagged"
+    // pseudo-tag hides tasks that have no tags at all.
+    if (excludeTags.length) {
+      visible = visible.filter(
+        (t) => !excludeTags.some((tag) => (tag === UNTAGGED ? t.tags.length === 0 : t.tags.includes(tag))),
+      );
     }
 
     const reg = this.state.tags;
@@ -686,40 +707,63 @@ export default class App extends React.Component<Record<string, never>, AppState
     const activeTags = reg.filter((g) => !g.archived).map(tagRow);
     const archivedTags = reg.filter((g) => g.archived).map(tagRow);
 
+    // Tri-state box shared style: `incColor` is the tag's own include tint (grey for
+    // Untagged), `excColor` the shared "hide" red.
+    const triBox = (incColor: string, active: boolean, excluded: boolean) => {
+      const col = active ? incColor : excluded ? '#c0563f' : null;
+      return `width:16px;height:16px;border-radius:4px;flex:none;display:grid;place-items:center;border:1.6px solid ${col || '#d8d3c8'};background:${col || '#fff'};color:#fff;font:700 12px 'Public Sans',sans-serif;line-height:0;transition:all .12s`;
+    };
+    const triGlyph = (active: boolean, excluded: boolean) => (active ? '✓' : excluded ? '−' : '');
+    const triName = (excluded: boolean) =>
+      `flex:1;min-width:0;${excluded ? 'text-decoration:line-through;text-decoration-color:#c98b7e;color:#b3ada2' : ''}`;
+    const triTitle = (active: boolean, excluded: boolean) =>
+      active ? 'Showing only this tag — click to hide' : excluded ? 'Hidden — click to clear' : 'Click to show only this tag';
+
     const filterableTags = reg.filter((g) => !g.archived && counts(g.name) > 0);
     const filterChecks: TagFilterRowVM[] = filterableTags.map((g) => {
       const c = this.tagColor(g.name);
       const active = activeFilterTags.includes(g.name);
+      const excluded = excludeTags.includes(g.name);
       return {
         name: g.name,
         count: counts(g.name),
         active,
-        checkStyle: `width:15px;height:15px;border-radius:4px;flex:none;display:grid;place-items:center;border:1.5px solid ${active ? c.fg : '#d8d3c8'};background:${active ? c.fg : '#fff'}`,
+        excluded,
+        boxStyle: triBox(c.fg, active, excluded),
+        glyph: triGlyph(active, excluded),
         dotStyle: `width:8px;height:8px;border-radius:50%;flex:none;background:${c.fg}`,
+        nameStyle: triName(excluded),
+        title: triTitle(active, excluded),
       };
     });
     // "Untagged" pseudo-tag: prepended as the first filter option, shown only when
-    // some task has no tags. Deliberately styled apart from real tags (neutral grey,
-    // hollow dashed dot).
+    // some task has no tags. Deliberately styled apart from real tags (neutral grey
+    // include color, hollow dashed dot).
+    const untaggedExcluded = excludeTags.includes(UNTAGGED);
     const untaggedCount = this.state.tasks.filter((t) => t.tags.length === 0).length;
     if (untaggedCount > 0) {
       filterChecks.unshift({
         name: UNTAGGED,
         count: untaggedCount,
         active: untaggedFilterActive,
-        checkStyle: `width:15px;height:15px;border-radius:4px;flex:none;display:grid;place-items:center;border:1.5px solid ${untaggedFilterActive ? '#6b655b' : '#d8d3c8'};background:${untaggedFilterActive ? '#6b655b' : '#fff'}`,
+        excluded: untaggedExcluded,
+        boxStyle: triBox('#6b655b', untaggedFilterActive, untaggedExcluded),
+        glyph: triGlyph(untaggedFilterActive, untaggedExcluded),
         dotStyle: 'width:8px;height:8px;border-radius:50%;flex:none;border:1.4px dashed #b3ada2;background:transparent',
+        nameStyle: triName(untaggedExcluded),
+        title: triTitle(untaggedFilterActive, untaggedExcluded),
       });
     }
-    const filterCount = activeFilterTags.length;
+    const filterCount = activeFilterTags.length + excludeTags.length;
     const filterBtnStyle = `display:inline-flex;align-items:center;gap:7px;padding:8px 14px;background:${filterCount ? accent + '14' : '#fff'};border:1px solid ${filterCount ? accent : '#e6e2da'};border-radius:10px;font:600 12.5px 'Public Sans',sans-serif;color:${filterCount ? accent : '#4a453d'};cursor:pointer;box-shadow:0 1px 2px rgba(31,29,27,.03)`;
     const filterBadgeStyle = `display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:20px;background:${accent};color:#fff;font:700 10px 'JetBrains Mono',monospace`;
 
     // Saved searches: a chip is "active" when its tag set (order-independent) and search string match the current filter.
     const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
-    const canSave = activeFilterTags.length > 0 || q.length > 0;
+    const canSave = activeFilterTags.length > 0 || excludeTags.length > 0 || q.length > 0;
     const savedChips: SavedChipVM[] = this.state.savedFilters.map((sf) => {
-      const active = sameSet(sf.tags || [], activeFilterTags) && (sf.search || '') === this.state.search;
+      const active =
+        sameSet(sf.tags || [], activeFilterTags) && sameSet(sf.exclude || [], excludeTags) && (sf.search || '') === this.state.search;
       return {
         id: sf.id,
         name: sf.name,

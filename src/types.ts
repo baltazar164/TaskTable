@@ -16,6 +16,7 @@ export interface SavedFilter {
   id: string;
   name: string;
   tags: string[];
+  exclude: string[];
   search: string;
 }
 
@@ -32,13 +33,17 @@ export interface TagColor {
   br: string;
 }
 
-/** Precomputed view-model for one tag row in the filter popover. */
+/** Precomputed view-model for one tag row in the filter popover (tri-state). */
 export interface TagFilterRowVM {
   name: string;
   count: number;
-  active: boolean;
-  checkStyle: string;
+  active: boolean; // "show only"
+  excluded: boolean; // "hide"
+  boxStyle: string; // the single tri-state box
+  glyph: string; // '✓' | '−' | ''
   dotStyle: string;
+  nameStyle: string; // adds strikethrough when excluded
+  title: string; // tooltip for current state
 }
 
 /** Precomputed view-model for one saved-search chip. */

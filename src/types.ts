@@ -11,6 +11,14 @@ export interface TagInfo {
   archived: boolean;
 }
 
+/** A captured filter combination (tag filters + search text) the user can re-apply. */
+export interface SavedFilter {
+  id: string;
+  name: string;
+  tags: string[];
+  search: string;
+}
+
 export interface GhConfig {
   owner: string;
   repo: string;
@@ -31,6 +39,16 @@ export interface TagFilterRowVM {
   active: boolean;
   checkStyle: string;
   dotStyle: string;
+}
+
+/** Precomputed view-model for one saved-search chip. */
+export interface SavedChipVM {
+  id: string;
+  name: string;
+  active: boolean;
+  wrapStyle: string;
+  btnStyle: string;
+  title: string;
 }
 
 /** Precomputed view-model for one task row (style strings are parsed by css()). */

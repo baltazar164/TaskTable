@@ -1,9 +1,10 @@
-import type { Task, TagInfo, GhConfig } from './types';
+import type { Task, TagInfo, GhConfig, SavedFilter } from './types';
 
 // Keys are shared with the legacy single-file app so existing data survives.
 const KEYS = {
   tasks: 'ptm.tasks.v2',
   tags: 'ptm.tags.v1',
+  savedFilters: 'ptm.savedFilters.v1',
   ghConfig: 'ptm.gh.config',
   ghToken: 'ptm.gh.token',
   ghAuto: 'ptm.gh.auto',
@@ -43,6 +44,14 @@ export function loadTags(): TagInfo[] | null {
 
 export function saveTags(tags: TagInfo[]): void {
   write(KEYS.tags, JSON.stringify(tags));
+}
+
+export function loadSavedFilters(): SavedFilter[] | null {
+  return readJson<SavedFilter[]>(KEYS.savedFilters);
+}
+
+export function saveSavedFilters(list: SavedFilter[]): void {
+  write(KEYS.savedFilters, JSON.stringify(list));
 }
 
 export function loadGhConfig(): GhConfig {

@@ -1,10 +1,11 @@
 import React from 'react';
-import type { Task, TagInfo, GhConfig, TagColor, RowVM, TagFilterRowVM } from './types';
+import type { Task, TagInfo, SavedFilter, GhConfig, TagColor, RowVM, TagFilterRowVM, SavedChipVM } from './types';
 import * as store from './storage';
 import { apiUrl, ghHeaders, decodeContent, encodeContent, diagnose404 } from './github';
 import { css } from './lib/css';
 import TaskRow from './components/TaskRow';
 import FilterDropdown from './components/FilterDropdown';
+import SavedSearches from './components/SavedSearches';
 import AddTaskModal from './components/AddTaskModal';
 import TaskDetailModal from './components/TaskDetailModal';
 import SyncModal from './components/SyncModal';
@@ -31,6 +32,9 @@ interface AppState {
   search: string;
   filterTags: string[];
   filterPopoverOpen: boolean;
+  savedFilters: SavedFilter[];
+  saveFilterOpen: boolean;
+  saveFilterName: string;
   dragId: string | null;
   tagInputId: string | null;
   tagQuery: string;
@@ -82,6 +86,9 @@ export default class App extends React.Component<Record<string, never>, AppState
       search: '',
       filterTags: [],
       filterPopoverOpen: false,
+      savedFilters: store.loadSavedFilters() || [],
+      saveFilterOpen: false,
+      saveFilterName: '',
       dragId: null,
       tagInputId: null,
       tagQuery: '',
@@ -286,6 +293,50 @@ export default class App extends React.Component<Record<string, never>, AppState
   clearFilters = () => this.setState({ filterTags: [] });
   toggleFilterPopover = () => this.setState((s) => ({ filterPopoverOpen: !s.filterPopoverOpen }));
   closeFilterPopover = () => this.setState({ filterPopoverOpen: false });
+
+  // ---- saved searches ----
+  openSaveFilter = () => {
+    const suggestion = this.state.filterTags.map((t) => t[0].toUpperCase() + t.slice(1)).join(' + ');
+    this.setState({ saveFilterOpen: true, saveFilterName: suggestion });
+  };
+  cancelSaveFilter = () => this.setState({ saveFilterOpen: false, saveFilterName: '' });
+  onSaveFilterNameInput = (e: React.ChangeEvent<HTMLInputElement>) => this.setState({ saveFilterName: e.target.value });
+  onSaveFilterKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      this.confirmSaveFilter();
+    } else if (e.key === 'Escape') {
+      this.cancelSaveFilter();
+    }
+  };
+  confirmSaveFilter = () => {
+    const name = this.state.saveFilterName.trim();
+    if (!name) return;
+    const entry: SavedFilter = { id: store.uid(), name, tags: [...this.state.filterTags], search: this.state.search };
+    const list = [...this.state.savedFilters, entry];
+    store.saveSavedFilters(list);
+    this.setState({ savedFilters: list, saveFilterOpen: false, saveFilterName: '' });
+  };
+  onApplySavedFilter = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const id = e.currentTarget.dataset.id;
+    const entry = this.state.savedFilters.find((f) => f.id === id);
+    if (!entry) return;
+    const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+    const active = sameSet(entry.tags || [], this.state.filterTags) && (entry.search || '') === this.state.search;
+    if (active) {
+      this.setState({ filterTags: [], search: '', filterPopoverOpen: false });
+      return;
+    }
+    this.setState({ filterTags: [...entry.tags], search: entry.search || '', filterPopoverOpen: false });
+  };
+  onDeleteSavedFilter = (e: React.MouseEvent<HTMLSpanElement>) => {
+    e.stopPropagation();
+    const id = e.currentTarget.dataset.id;
+    const list = this.state.savedFilters.filter((f) => f.id !== id);
+    store.saveSavedFilters(list);
+    this.setState({ savedFilters: list });
+  };
+
   onToggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     const id = this.rowOf(e);
@@ -639,6 +690,25 @@ export default class App extends React.Component<Record<string, never>, AppState
     const filterBtnStyle = `display:inline-flex;align-items:center;gap:7px;padding:8px 14px;background:${filterCount ? accent + '14' : '#fff'};border:1px solid ${filterCount ? accent : '#e6e2da'};border-radius:10px;font:600 12.5px 'Public Sans',sans-serif;color:${filterCount ? accent : '#4a453d'};cursor:pointer;box-shadow:0 1px 2px rgba(31,29,27,.03)`;
     const filterBadgeStyle = `display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;border-radius:20px;background:${accent};color:#fff;font:700 10px 'JetBrains Mono',monospace`;
 
+    // Saved searches: a chip is "active" when its tag set (order-independent) and search string match the current filter.
+    const sameSet = (a: string[], b: string[]) => a.length === b.length && a.every((x) => b.includes(x));
+    const canSave = activeFilterTags.length > 0 || q.length > 0;
+    const savedChips: SavedChipVM[] = this.state.savedFilters.map((sf) => {
+      const active = sameSet(sf.tags || [], activeFilterTags) && (sf.search || '') === this.state.search;
+      return {
+        id: sf.id,
+        name: sf.name,
+        active,
+        wrapStyle:
+          `display:inline-flex;align-items:center;border-radius:20px;white-space:nowrap;` +
+          (active ? `background:${accent};color:#fff;border:1px solid ${accent}` : `background:#fff;color:#4a453d;border:1px solid #e6e2da`),
+        btnStyle: `border:none;background:none;cursor:pointer;padding:6px 4px 6px 13px;font:600 12px 'Public Sans',sans-serif;color:inherit;white-space:nowrap`,
+        title: active ? 'Click to turn off this search' : 'Apply this search',
+      };
+    });
+    const saveConfirmStyle = `border:none;background:${accent};color:#fff;border-radius:20px;padding:5px 12px;font:600 11.5px 'Public Sans',sans-serif;cursor:pointer`;
+    const hasSavedUI = savedChips.length > 0 || canSave || this.state.saveFilterOpen;
+
     const total = this.state.tasks.length;
     const done = this.state.tasks.filter((t) => t.done).length;
     const addBtnStyle = `display:inline-flex;align-items:center;gap:6px;padding:9px 16px;background:${accent};color:#fff;border:none;border-radius:11px;font:600 13px 'Public Sans',sans-serif;cursor:pointer;white-space:nowrap;box-shadow:0 1px 2px rgba(31,29,27,.1)`;
@@ -682,6 +752,25 @@ export default class App extends React.Component<Record<string, never>, AppState
               <button onClick={this.openTags} className="hv-bg" style={ghostHeaderBtn}>Manage tags</button>
             </div>
           </div>
+
+          {hasSavedUI && (
+            <SavedSearches
+              savedChips={savedChips}
+              noSavedFilters={savedChips.length === 0}
+              saveFilterOpen={this.state.saveFilterOpen}
+              saveFilterName={this.state.saveFilterName}
+              showSaveCurrentBtn={canSave && !this.state.saveFilterOpen}
+              saveConfirmStyle={saveConfirmStyle}
+              openSaveFilter={this.openSaveFilter}
+              cancelSaveFilter={this.cancelSaveFilter}
+              confirmSaveFilter={this.confirmSaveFilter}
+              onSaveFilterNameInput={this.onSaveFilterNameInput}
+              onSaveFilterKey={this.onSaveFilterKey}
+              onApplySavedFilter={this.onApplySavedFilter}
+              onDeleteSavedFilter={this.onDeleteSavedFilter}
+              stop={this.stop}
+            />
+          )}
 
           <div style={css('display:flex;align-items:stretch;gap:10px;margin-bottom:14px')}>
             <button onClick={this.openModal} title="Add task" style={css(addBtnStyle)}>

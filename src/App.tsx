@@ -210,12 +210,14 @@ export default class App extends React.Component<Record<string, never>, AppState
       const tags: TagInfo[] = Array.isArray(data.tags)
         ? data.tags
         : [...new Set(tasks.flatMap((t) => t.tags || []))].map((name) => ({ name, archived: false }));
+      const savedFilters: SavedFilter[] = Array.isArray(data.savedFilters) ? data.savedFilters : this.state.savedFilters;
       this._applyingRemote = true;
       store.saveTasks(tasks);
       store.saveTags(tags);
+      store.saveSavedFilters(savedFilters);
       const now = new Date().toISOString();
       store.saveLastSync(now);
-      this.setState({ tasks, tags, ghSha: j.sha, syncStatus: 'ok', syncMsg: 'Pulled the latest from GitHub.', lastSync: now, selectedId: null, tagInputId: null });
+      this.setState({ tasks, tags, savedFilters, ghSha: j.sha, syncStatus: 'ok', syncMsg: 'Pulled the latest from GitHub.', lastSync: now, selectedId: null, tagInputId: null });
       this._applyingRemote = false;
     } catch (err) {
       this._applyingRemote = false;
@@ -240,7 +242,7 @@ export default class App extends React.Component<Record<string, never>, AppState
       } catch {
         /* keep previous sha */
       }
-      const data = { version: 2, exportedAt: new Date().toISOString(), tasks: this.state.tasks, tags: this.state.tags };
+      const data = { version: 2, exportedAt: new Date().toISOString(), tasks: this.state.tasks, tags: this.state.tags, savedFilters: this.state.savedFilters };
       const body: { message: string; content: string; branch: string; sha?: string } = {
         message: `Update tasks — ${new Date().toLocaleString()}`,
         content: encodeContent(data),
@@ -330,6 +332,7 @@ export default class App extends React.Component<Record<string, never>, AppState
     const list = [...this.state.savedFilters, entry];
     store.saveSavedFilters(list);
     this.setState({ savedFilters: list, saveFilterOpen: false, saveFilterName: '' });
+    this.scheduleAutoPush();
   };
   onApplySavedFilter = (e: React.MouseEvent<HTMLButtonElement>) => {
     const id = e.currentTarget.dataset.id;
@@ -352,6 +355,7 @@ export default class App extends React.Component<Record<string, never>, AppState
     const list = this.state.savedFilters.filter((f) => f.id !== id);
     store.saveSavedFilters(list);
     this.setState({ savedFilters: list });
+    this.scheduleAutoPush();
   };
 
   onToggle = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -474,7 +478,7 @@ export default class App extends React.Component<Record<string, never>, AppState
 
   // ---- backup: export / import ----
   exportData = () => {
-    const data = { version: 2, exportedAt: new Date().toISOString(), tasks: this.state.tasks, tags: this.state.tags };
+    const data = { version: 2, exportedAt: new Date().toISOString(), tasks: this.state.tasks, tags: this.state.tags, savedFilters: this.state.savedFilters };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -501,9 +505,11 @@ export default class App extends React.Component<Record<string, never>, AppState
         const tags: TagInfo[] = Array.isArray(data.tags)
           ? data.tags
           : [...new Set(tasks.flatMap((t) => t.tags || []))].map((name) => ({ name, archived: false }));
+        const savedFilters: SavedFilter[] = Array.isArray(data.savedFilters) ? data.savedFilters : this.state.savedFilters;
         this.save(tasks);
         this.saveTags(tags);
-        this.setState({ tasks, tags, selectedId: null, tagInputId: null, tagsOpen: false });
+        store.saveSavedFilters(savedFilters);
+        this.setState({ tasks, tags, savedFilters, selectedId: null, tagInputId: null, tagsOpen: false });
       } catch {
         window.alert("Could not read that file — make sure it's a backup exported from this app.");
       }

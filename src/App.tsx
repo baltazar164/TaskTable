@@ -652,10 +652,13 @@ export default class App extends React.Component<Record<string, never>, AppState
       const open = t.id === this.state.tagInputId;
       const avail = open ? reg.filter((g) => !g.archived && !t.tags.includes(g.name) && (!tq || g.name.includes(tq))) : [];
       const canCreate = open && tq.length > 0 && !reg.some((g) => g.name === tq);
+      const hasDesc = (t.description || '').replace(/\s+/g, ' ').trim().length > 0;
       return {
         id: t.id,
         name: t.name,
         done: t.done,
+        hasDesc,
+        detailTitle: hasDesc ? 'Open task — has description' : 'Open task',
         showTagInput: open,
         showAddBtn: !open,
         suggestions: avail.map((g) => {
@@ -682,7 +685,7 @@ export default class App extends React.Component<Record<string, never>, AppState
           `cursor:pointer;padding:0;transition:all .12s` +
           (narrow ? ';grid-column:4;grid-row:2;justify-self:center' : ''),
         detailStyle:
-          `display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.6px solid #d8d3c8;border-radius:5px;background:#fff;color:#948d80;cursor:pointer;padding:0;font-size:11px;line-height:1;transition:all .12s` +
+          `display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.6px solid ${hasDesc ? accent : '#d8d3c8'};border-radius:5px;background:${hasDesc ? accent + '12' : '#fff'};color:${hasDesc ? accent : '#948d80'};cursor:pointer;padding:0;line-height:1;transition:all .12s` +
           (narrow ? ';grid-column:3;grid-row:2;justify-self:center' : ''),
         nameStyle:
           `font:${nameFont};padding:2px 4px;margin:-2px 0;border-radius:5px;min-width:30px;cursor:text;` +
@@ -859,7 +862,7 @@ export default class App extends React.Component<Record<string, never>, AppState
             </div>
           </div>
 
-          <div style={css('background:#fff;border:1px solid #e6e2da;border-radius:13px;overflow:hidden;box-shadow:0 1px 3px rgba(31,29,27,.05)')}>
+          <div style={css('background:#fff;border:1px solid #e6e2da;border-radius:13px;overflow:visible;box-shadow:0 1px 3px rgba(31,29,27,.05)')}>
             <div style={css("display:grid;grid-template-columns:24px 22px 22px minmax(0,1fr) auto;align-items:center;gap:9px;padding:10px 14px;border-bottom:1px solid #efece5;font:600 10px 'JetBrains Mono',monospace;color:#b3ada2;text-transform:uppercase;letter-spacing:.07em")}>
               <span></span><span></span><span></span><span>Task</span><span style={css('text-align:right')}>Tags</span>
             </div>

@@ -61,6 +61,8 @@ export interface RowVM {
   id: string;
   name: string;
   done: boolean;
+  hasDesc: boolean;
+  detailTitle: string;
   showTagInput: boolean;
   showAddBtn: boolean;
   suggestions: { name: string; dot: string }[];

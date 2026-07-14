@@ -34,7 +34,15 @@ export default function TaskRow({ row, tagQuery, ...h }: Props) {
         </span>
       </span>
 
-      <button onClick={h.onOpenDetail} title="Open task" className="hv-addtag" style={css(row.detailStyle)}>⤢</button>
+      <button onClick={h.onOpenDetail} title={row.detailTitle} className="hv-detail" style={css(row.detailStyle)}>
+        <svg width="12" height="12" viewBox="0 0 14 14" fill="none" aria-hidden="true">
+          {row.hasDesc && <rect x="2.5" y="1.5" width="9" height="11" rx="1.6" fill="currentColor" opacity="0.14" />}
+          <rect x="2.5" y="1.5" width="9" height="11" rx="1.6" stroke="currentColor" strokeWidth="1.3" />
+          {row.hasDesc && (
+            <path d="M4.8 5h4.4M4.8 7.3h4.4M4.8 9.6h2.6" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+          )}
+        </svg>
+      </button>
 
       <button onClick={h.onToggle} style={css(row.checkStyle)}>
         {row.done && <span>✓</span>}

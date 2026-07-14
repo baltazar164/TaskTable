@@ -41,6 +41,9 @@ body {
   color: #8f887c;
   border-color: #b3ada2;
 }
+.hv-detail:hover {
+  border-color: #b3ada2;
+}
 .hv-save:hover {
   color: #4a453d;
   border-color: #b3ada2;

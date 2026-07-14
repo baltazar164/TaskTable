@@ -56,6 +56,12 @@ export interface SavedChipVM {
   title: string;
 }
 
+/** Precomputed view-model for one selectable tag chip in the New task modal. */
+export interface ModalTagChipVM {
+  name: string;
+  style: string; // solid when selected, pastel when not
+}
+
 /** Precomputed view-model for one task row (style strings are parsed by css()). */
 export interface RowVM {
   id: string;

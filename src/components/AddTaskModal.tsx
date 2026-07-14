@@ -1,15 +1,19 @@
 import React from 'react';
+import type { ModalTagChipVM } from '../types';
 import { css } from '../lib/css';
 
 interface Props {
   modalName: string;
   modalHint: string;
   hasModalHint: boolean;
+  modalTagChips: ModalTagChipVM[];
+  noModalTags: boolean;
   modalSubmitStyle: string;
   closeModal: () => void;
   stop: (e: React.SyntheticEvent) => void;
   onModalInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onModalKey: (e: React.KeyboardEvent<HTMLInputElement>) => void;
+  toggleModalTag: (e: React.MouseEvent<HTMLButtonElement>) => void;
   submitModal: () => void;
 }
 
@@ -34,6 +38,19 @@ export default function AddTaskModal(p: Props) {
         {p.hasModalHint && (
           <p style={css("margin:11px 2px 0;font:500 12px 'JetBrains Mono',monospace;color:#a49e93")}>↳ {p.modalHint}</p>
         )}
+        <div style={css('margin-top:16px')}>
+          <label style={css("display:block;font:600 10px 'JetBrains Mono',monospace;color:#b3ada2;text-transform:uppercase;letter-spacing:.06em;margin-bottom:8px")}>Tags</label>
+          <div style={css('display:flex;flex-wrap:wrap;gap:7px;align-items:center')}>
+            {p.modalTagChips.map((mt) => (
+              <button key={mt.name} onClick={p.toggleModalTag} data-tag={mt.name} style={css(mt.style)}>
+                {mt.name}
+              </button>
+            ))}
+            {p.noModalTags && (
+              <span style={css("font:500 12px 'Public Sans',sans-serif;color:#bdb7ab")}>No tags yet — create one below.</span>
+            )}
+          </div>
+        </div>
         <div style={css('display:flex;justify-content:flex-end;gap:9px;margin-top:18px')}>
           <button
             onClick={p.closeModal}

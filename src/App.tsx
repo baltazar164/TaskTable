@@ -1,5 +1,5 @@
 import React from 'react';
-import type { Task, TagInfo, SavedFilter, GhConfig, TagColor, RowVM, TagFilterRowVM, SavedChipVM } from './types';
+import type { Task, TagInfo, SavedFilter, GhConfig, TagColor, RowVM, TagFilterRowVM, SavedChipVM, ModalTagChipVM } from './types';
 import * as store from './storage';
 import { apiUrl, ghHeaders, decodeContent, encodeContent, diagnose404 } from './github';
 import { css } from './lib/css';
@@ -45,6 +45,7 @@ interface AppState {
   tagQuery: string;
   modalOpen: boolean;
   modalName: string;
+  modalTags: string[];
   selectedId: string | null;
   tagsOpen: boolean;
   newTagName: string;
@@ -100,6 +101,7 @@ export default class App extends React.Component<Record<string, never>, AppState
       tagQuery: '',
       modalOpen: false,
       modalName: '',
+      modalTags: [],
       selectedId: null,
       tagsOpen: false,
       newTagName: '',
@@ -371,19 +373,30 @@ export default class App extends React.Component<Record<string, never>, AppState
   clearDone = () => this.commit(this.state.tasks.filter((t) => !t.done));
 
   // ---- add-task modal ----
-  openModal = () => this.setState({ modalOpen: true, modalName: '' });
+  // A new task inherits the selected row's tags by default (the user can toggle
+  // any off/on before submitting); nothing selected opens with no tags chosen.
+  openModal = () => {
+    const sel = this.state.tasks.find((t) => t.id === this.state.selectedId);
+    this.setState({ modalOpen: true, modalName: '', modalTags: sel ? [...sel.tags] : [] });
+  };
   closeModal = () => this.setState({ modalOpen: false });
   stop = (e: React.SyntheticEvent) => e.stopPropagation();
   onModalInput = (e: React.ChangeEvent<HTMLInputElement>) => this.setState({ modalName: e.target.value });
+  toggleModalTag = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const name = e.currentTarget.dataset.tag || '';
+    this.setState((s) => ({
+      modalTags: s.modalTags.includes(name) ? s.modalTags.filter((x) => x !== name) : [...s.modalTags, name],
+    }));
+  };
   submitModal = () => {
     const v = this.state.modalName.trim();
     if (!v) return;
-    const nt: Task = { id: store.uid(), name: v, tags: [], done: false };
+    const nt: Task = { id: store.uid(), name: v, tags: [...this.state.modalTags], done: false };
     const arr = [...this.state.tasks];
     const idx = this.state.selectedId ? arr.findIndex((t) => t.id === this.state.selectedId) : -1;
     if (idx >= 0) arr.splice(idx + 1, 0, nt);
     else arr.push(nt);
-    this.commit(arr, { modalOpen: false, modalName: '', selectedId: nt.id });
+    this.commit(arr, { modalOpen: false, modalName: '', modalTags: [], selectedId: nt.id });
   };
   onModalKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -792,6 +805,19 @@ export default class App extends React.Component<Record<string, never>, AppState
     const addBtnStyle = `display:inline-flex;align-items:center;gap:6px;padding:9px 16px;background:${accent};color:#fff;border:none;border-radius:11px;font:600 13px 'Public Sans',sans-serif;cursor:pointer;white-space:nowrap;box-shadow:0 1px 2px rgba(31,29,27,.1)`;
     const sel = this.state.tasks.find((t) => t.id === this.state.selectedId);
     const modalHint = sel ? `Adds below "${sel.name.length > 34 ? sel.name.slice(0, 34) + '…' : sel.name}"` : '';
+    // New task modal only lets you choose from existing (non-archived) tags —
+    // selected chips render solid, unselected in the tag's pastel style.
+    const modalTagChips: ModalTagChipVM[] = reg
+      .filter((g) => !g.archived)
+      .map((g) => {
+        const c = this.tagColor(g.name);
+        const on = this.state.modalTags.includes(g.name);
+        const base = "display:inline-flex;align-items:center;gap:6px;padding:6px 13px;border-radius:20px;font:600 12px 'Public Sans',sans-serif;cursor:pointer;transition:all .12s;";
+        return {
+          name: g.name,
+          style: base + (on ? `background:${c.fg};color:#fff;border:1px solid ${c.fg}` : `background:${c.bg};color:${c.fg};border:1px solid ${c.br}`),
+        };
+      });
     const modalSubmitStyle = `padding:9px 18px;background:${accent};color:#fff;border:none;border-radius:10px;font:600 13px 'Public Sans',sans-serif;cursor:pointer`;
     const syncDotStyle = `width:8px;height:8px;border-radius:50%;flex:none;background:${this.state.ghToken ? '#0d8f6f' : '#cbc6bb'}`;
     const syncStatusColor = this.state.syncStatus === 'error' ? '#b0432f' : this.state.syncStatus === 'ok' ? '#0d8f6f' : '#a49e93';
@@ -967,11 +993,14 @@ export default class App extends React.Component<Record<string, never>, AppState
             modalName={this.state.modalName}
             modalHint={modalHint}
             hasModalHint={!!sel}
+            modalTagChips={modalTagChips}
+            noModalTags={modalTagChips.length === 0}
             modalSubmitStyle={modalSubmitStyle}
             closeModal={this.closeModal}
             stop={this.stop}
             onModalInput={this.onModalInput}
             onModalKey={this.onModalKey}
+            toggleModalTag={this.toggleModalTag}
             submitModal={this.submitModal}
           />
         )}

@@ -1,8 +1,11 @@
+/** A task moves forward through this cycle: To do → Doing → Done → To do. */
+export type TaskStatus = 'todo' | 'doing' | 'done';
+
 export interface Task {
   id: string;
   name: string;
   tags: string[];
-  done: boolean;
+  status: TaskStatus;
   description?: string;
 }
 
@@ -66,7 +69,8 @@ export interface ModalTagChipVM {
 export interface RowVM {
   id: string;
   name: string;
-  done: boolean;
+  status: TaskStatus;
+  checkTitle: string; // tooltip: current status + next on click
   hasDesc: boolean;
   detailTitle: string;
   showTagInput: boolean;

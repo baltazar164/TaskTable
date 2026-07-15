@@ -1,6 +1,7 @@
 import React from 'react';
 import type { Task, TagInfo, SavedFilter, GhConfig, TagColor, RowVM, TagFilterRowVM, SavedChipVM, ModalTagChipVM } from './types';
 import * as store from './storage';
+import { normStatus, normTasks, nextStatus } from './status';
 import { apiUrl, ghHeaders, decodeContent, encodeContent, diagnose404 } from './github';
 import { css } from './lib/css';
 import TaskRow from './components/TaskRow';
@@ -12,22 +13,22 @@ import SyncModal from './components/SyncModal';
 import ManageTags from './components/ManageTags';
 import type { TagRowVM } from './components/ManageTags';
 
-// Fixed values of the legacy Claude Design props (accent / density / hideCompleted).
+// Fixed values of the legacy Claude Design props (accent / density).
 const ACCENT = '#c1762a';
 const COMPACT = true;
-const HIDE_COMPLETED = false;
 
 // Built-in pseudo-tag for filtering tasks that have no tags. Never a real tag
 // (real tags are always lowercased), so it can live in filterTags without collision.
 const UNTAGGED = 'Untagged';
 
+// Warm/earthy tag palette — distinguishable without any cold blue/emerald.
 const PALETTE: TagColor[] = [
-  { fg: '#3a5ccc', bg: '#eef2fd', br: '#cdd8f7' },
-  { fg: '#0d8f6f', bg: '#e8f6f0', br: '#c4e8db' },
-  { fg: '#c1762a', bg: '#faf1e3', br: '#ecd8ba' },
-  { fg: '#a0459b', bg: '#f9edf7', br: '#ecccea' },
-  { fg: '#4b7a2b', bg: '#eef5e6', br: '#d3e6c2' },
-  { fg: '#b23b5e', bg: '#fbedf1', br: '#f0cdd8' },
+  { fg: '#b5622b', bg: '#f9efe4', br: '#ebd6bc' }, // rust
+  { fg: '#7c8a45', bg: '#f1f2e2', br: '#dbe0bf' }, // olive
+  { fg: '#b04f3e', bg: '#f9ebe7', br: '#eecabf' }, // clay-red
+  { fg: '#8a5684', bg: '#f4ecf2', br: '#e2cddf' }, // plum
+  { fg: '#a67c27', bg: '#f7f0dc', br: '#e8d9b0' }, // amber-brown
+  { fg: '#5f7d6a', bg: '#ecf1ec', br: '#cfddd2' }, // sage
 ];
 
 interface AppState {
@@ -75,14 +76,17 @@ export default class App extends React.Component<Record<string, never>, AppState
 
   constructor(props: Record<string, never>) {
     super(props);
-    const tasks = store.loadTasks() || [
-      { id: store.uid(), name: 'Draft Q3 planning doc', tags: ['work'], done: false },
-      { id: store.uid(), name: 'Reply to landlord email', tags: ['home'], done: false },
-      { id: store.uid(), name: 'Book dentist appointment', tags: ['home', 'errand'], done: false },
-      { id: store.uid(), name: 'Review pull request #482', tags: ['work'], done: false },
-      { id: store.uid(), name: 'Renew gym membership', tags: ['errand'], done: true },
-      { id: store.uid(), name: 'Plan weekend hike', tags: ['personal'], done: false },
-    ];
+    const loaded = store.loadTasks();
+    const tasks: Task[] = loaded
+      ? normTasks(loaded)
+      : [
+          { id: store.uid(), name: 'Draft Q3 planning doc', tags: ['work'], status: 'doing' },
+          { id: store.uid(), name: 'Reply to landlord email', tags: ['home'], status: 'todo' },
+          { id: store.uid(), name: 'Book dentist appointment', tags: ['home', 'errand'], status: 'todo' },
+          { id: store.uid(), name: 'Review pull request #482', tags: ['work'], status: 'doing' },
+          { id: store.uid(), name: 'Renew gym membership', tags: ['errand'], status: 'done' },
+          { id: store.uid(), name: 'Plan weekend hike', tags: ['personal'], status: 'todo' },
+        ];
     const savedTags = store.loadTags();
     const tags = savedTags || [...new Set(tasks.flatMap((t) => t.tags))].map((name) => ({ name, archived: false }));
     const token = store.loadGhToken();
@@ -208,7 +212,7 @@ export default class App extends React.Component<Record<string, never>, AppState
       const j = await res.json();
       const text = decodeContent(j.content || '');
       const data = JSON.parse(text);
-      const tasks: Task[] = Array.isArray(data.tasks) ? data.tasks : [];
+      const tasks: Task[] = normTasks(data.tasks);
       const tags: TagInfo[] = Array.isArray(data.tags)
         ? data.tags
         : [...new Set(tasks.flatMap((t) => t.tags || []))].map((name) => ({ name, archived: false }));
@@ -360,17 +364,18 @@ export default class App extends React.Component<Record<string, never>, AppState
     this.scheduleAutoPush();
   };
 
+  // Checkbox click cycles the status forward: To do → Doing → Done → To do.
   onToggle = (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation();
     const id = this.rowOf(e);
-    this.commit(this.state.tasks.map((t) => (t.id === id ? { ...t, done: !t.done } : t)));
+    this.commit(this.state.tasks.map((t) => (t.id === id ? { ...t, status: nextStatus(normStatus(t)) } : t)));
   };
   onRowClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const id = this.rowOf(e);
     if (!id) return;
     this.setState((s) => ({ selectedId: s.selectedId === id ? null : id }));
   };
-  clearDone = () => this.commit(this.state.tasks.filter((t) => !t.done));
+  clearDone = () => this.commit(this.state.tasks.filter((t) => normStatus(t) !== 'done'));
 
   // ---- add-task modal ----
   // A new task inherits the selected row's tags by default (the user can toggle
@@ -391,7 +396,7 @@ export default class App extends React.Component<Record<string, never>, AppState
   submitModal = () => {
     const v = this.state.modalName.trim();
     if (!v) return;
-    const nt: Task = { id: store.uid(), name: v, tags: [...this.state.modalTags], done: false };
+    const nt: Task = { id: store.uid(), name: v, tags: [...this.state.modalTags], status: 'todo' };
     const arr = [...this.state.tasks];
     const idx = this.state.selectedId ? arr.findIndex((t) => t.id === this.state.selectedId) : -1;
     if (idx >= 0) arr.splice(idx + 1, 0, nt);
@@ -512,7 +517,7 @@ export default class App extends React.Component<Record<string, never>, AppState
     reader.onload = () => {
       try {
         const data = JSON.parse(reader.result as string);
-        const tasks: Task[] = Array.isArray(data.tasks) ? data.tasks : [];
+        const tasks: Task[] = normTasks(data.tasks);
         if (!tasks.length && !window.confirm('This backup has no tasks. Import anyway?')) return;
         if (!window.confirm(`Replace your current list with this backup (${tasks.length} task${tasks.length === 1 ? '' : 's'})? This cannot be undone.`)) return;
         const tags: TagInfo[] = Array.isArray(data.tags)
@@ -631,13 +636,11 @@ export default class App extends React.Component<Record<string, never>, AppState
   render() {
     const accent = ACCENT;
     const compact = COMPACT;
-    const hideCompleted = HIDE_COMPLETED;
     const pad = compact ? '5px 14px' : '9px 14px';
     const nameFont = compact ? "500 13px 'Public Sans',sans-serif" : "500 14px 'Public Sans',sans-serif";
 
     const q = this.state.search.trim().toLowerCase();
     let visible = this.state.tasks;
-    if (hideCompleted) visible = visible.filter((t) => !t.done);
     if (q) visible = visible.filter((t) => t.name.toLowerCase().includes(q) || t.tags.some((tg) => tg.includes(q)));
 
     const activeFilterTags = this.state.filterTags;
@@ -665,6 +668,23 @@ export default class App extends React.Component<Record<string, never>, AppState
     const tq = (this.state.tagQuery || '').trim().toLowerCase();
 
     const narrow = this.state.narrow;
+    // Pie-square checkbox fills communicate status: To do = empty outline,
+    // Doing = diagonal half-fill, Done = solid fill. Colors follow the warm scheme.
+    const CK: Record<Task['status'], string> = { todo: '#cdc7bc', doing: accent, done: '#7d8b4a' };
+    const LBL: Record<Task['status'], { label: string; next: string }> = {
+      todo: { label: 'To do', next: 'Doing' },
+      doing: { label: 'Doing', next: 'Done' },
+      done: { label: 'Done', next: 'To do' },
+    };
+    const checkStyleFor = (st: Task['status']) => {
+      const col = CK[st];
+      const bg = st === 'doing' ? `linear-gradient(135deg, ${col} 0 50%, #fff 50% 100%)` : st === 'done' ? col : '#fff';
+      return (
+        `width:17px;height:17px;border:1.6px solid ${col};border-radius:5px;background:${bg};` +
+        `cursor:pointer;padding:0;transition:all .12s;box-sizing:border-box;display:grid;place-items:center;line-height:1` +
+        (narrow ? ';grid-column:4;grid-row:2;justify-self:center' : '')
+      );
+    };
     const rows: RowVM[] = visible.map((t) => {
       const dragging = t.id === this.state.dragId;
       const selected = t.id === this.state.selectedId;
@@ -672,10 +692,12 @@ export default class App extends React.Component<Record<string, never>, AppState
       const avail = open ? reg.filter((g) => !g.archived && !t.tags.includes(g.name) && (!tq || g.name.includes(tq))) : [];
       const canCreate = open && tq.length > 0 && !reg.some((g) => g.name === tq);
       const hasDesc = (t.description || '').replace(/\s+/g, ' ').trim().length > 0;
+      const st = normStatus(t);
       return {
         id: t.id,
         name: t.name,
-        done: t.done,
+        status: st,
+        checkTitle: `${LBL[st].label} — click to mark ${LBL[st].next}`,
         hasDesc,
         detailTitle: hasDesc ? 'Open task — has description' : 'Open task',
         showTagInput: open,
@@ -698,17 +720,13 @@ export default class App extends React.Component<Record<string, never>, AppState
         tagWrapStyle: narrow
           ? 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-start;grid-column:1 / 3;grid-row:2;padding-top:2px'
           : 'display:flex;gap:5px;align-items:center;flex-wrap:wrap;justify-content:flex-end',
-        checkStyle:
-          `width:17px;height:17px;border:1.6px solid ${t.done ? accent : '#cdc7bc'};border-radius:5px;` +
-          `background:${t.done ? accent : '#fff'};color:#fff;font-size:11px;line-height:1;display:grid;place-items:center;` +
-          `cursor:pointer;padding:0;transition:all .12s` +
-          (narrow ? ';grid-column:4;grid-row:2;justify-self:center' : ''),
+        checkStyle: checkStyleFor(st),
         detailStyle:
           `display:inline-flex;align-items:center;justify-content:center;width:17px;height:17px;border:1.6px solid ${hasDesc ? accent : '#d8d3c8'};border-radius:5px;background:${hasDesc ? accent + '12' : '#fff'};color:${hasDesc ? accent : '#948d80'};cursor:pointer;padding:0;line-height:1;transition:all .12s` +
           (narrow ? ';grid-column:3;grid-row:2;justify-self:center' : ''),
         nameStyle:
           `font:${nameFont};padding:2px 4px;margin:-2px 0;border-radius:5px;min-width:30px;cursor:text;` +
-          (t.done ? 'text-decoration:line-through;color:#aca699' : 'color:#22201d') +
+          (st === 'done' ? 'text-decoration:line-through;color:#aca699' : 'color:#22201d') +
           (narrow ? ';grid-column:1 / 4;grid-row:1' : ''),
         tagPills: t.tags.map((name) => {
           const c = this.tagColor(name);
@@ -801,7 +819,7 @@ export default class App extends React.Component<Record<string, never>, AppState
     const hasSavedUI = savedChips.length > 0 || canSave || this.state.saveFilterOpen;
 
     const total = this.state.tasks.length;
-    const done = this.state.tasks.filter((t) => t.done).length;
+    const done = this.state.tasks.filter((t) => normStatus(t) === 'done').length;
     const addBtnStyle = `display:inline-flex;align-items:center;gap:6px;padding:9px 16px;background:${accent};color:#fff;border:none;border-radius:11px;font:600 13px 'Public Sans',sans-serif;cursor:pointer;white-space:nowrap;box-shadow:0 1px 2px rgba(31,29,27,.1)`;
     const sel = this.state.tasks.find((t) => t.id === this.state.selectedId);
     const modalHint = sel ? `Adds below "${sel.name.length > 34 ? sel.name.slice(0, 34) + '…' : sel.name}"` : '';
@@ -819,8 +837,8 @@ export default class App extends React.Component<Record<string, never>, AppState
         };
       });
     const modalSubmitStyle = `padding:9px 18px;background:${accent};color:#fff;border:none;border-radius:10px;font:600 13px 'Public Sans',sans-serif;cursor:pointer`;
-    const syncDotStyle = `width:8px;height:8px;border-radius:50%;flex:none;background:${this.state.ghToken ? '#0d8f6f' : '#cbc6bb'}`;
-    const syncStatusColor = this.state.syncStatus === 'error' ? '#b0432f' : this.state.syncStatus === 'ok' ? '#0d8f6f' : '#a49e93';
+    const syncDotStyle = `width:8px;height:8px;border-radius:50%;flex:none;background:${this.state.ghToken ? '#7d8b4a' : '#cbc6bb'}`;
+    const syncStatusColor = this.state.syncStatus === 'error' ? '#b0432f' : this.state.syncStatus === 'ok' ? '#7d8b4a' : '#a49e93';
     const lastSyncLabel = this.state.lastSync ? 'Last synced ' + new Date(this.state.lastSync).toLocaleString() : 'Not synced yet';
     const emptyLabel = q
       ? 'No tasks match your search.'
@@ -928,7 +946,7 @@ export default class App extends React.Component<Record<string, never>, AppState
               <button onClick={this.onImportClick} title="Load a backup file" className="hv-dark" style={footLinkStyle}>Import</button>
               <button onClick={this.exportData} title="Download a backup file" className="hv-dark" style={footLinkStyle}>Export</button>
               {done > 0 && (
-                <button onClick={this.clearDone} className="hv-dark" style={footLinkStyle}>Clear completed</button>
+                <button onClick={this.clearDone} className="hv-dark" style={footLinkStyle}>Clear done</button>
               )}
             </div>
           </div>

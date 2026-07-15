@@ -58,7 +58,7 @@ export default function SyncModal(p: Props) {
           style={css("width:100%;padding:10px 12px;border:1px solid #ddd8ce;border-radius:10px;outline:none;font:500 13px 'JetBrains Mono',monospace;color:#22201d;background:#faf9f6")}
         />
         <p style={css("margin:7px 2px 16px;font:400 11.5px 'Public Sans',sans-serif;color:#a49e93;line-height:1.5")}>
-          Create one at <span style={css('color:#3a5ccc')}>github.com/settings/tokens</span> with read/write access to <b>Contents</b> for this repo. It's stored only on this device.
+          Create one at <span style={css('color:#c1762a')}>github.com/settings/tokens</span> with read/write access to <b>Contents</b> for this repo. It's stored only on this device.
         </p>
 
         <label style={css("display:block;font:600 11px 'JetBrains Mono',monospace;color:#b3ada2;text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px")}>

@@ -44,9 +44,8 @@ export default function TaskRow({ row, tagQuery, ...h }: Props) {
         </svg>
       </button>
 
-      <button onClick={h.onToggle} style={css(row.checkStyle)}>
-        {row.done && <span>✓</span>}
-      </button>
+      <button onClick={h.onToggle} title={row.checkTitle} style={css(row.checkStyle)} />
+
 
       <span
         contentEditable

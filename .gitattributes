@@ -2,6 +2,10 @@
 # The repository stores text as LF; each OS checks out its native endings.
 * text=auto
 
+# Config dotfiles — keep LF everywhere (avoids the LF->CRLF warning)
+.gitattributes text eol=lf
+.gitignore     text eol=lf
+
 # Web/source text — store as LF, always (keeps diffs clean on every OS)
 *.ts   text eol=lf
 *.tsx  text eol=lf

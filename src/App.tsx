@@ -400,7 +400,7 @@ export default class App extends React.Component<Record<string, never>, AppState
     const arr = [...this.state.tasks];
     const idx = this.state.selectedId ? arr.findIndex((t) => t.id === this.state.selectedId) : -1;
     if (idx >= 0) arr.splice(idx + 1, 0, nt);
-    else arr.push(nt);
+    else arr.unshift(nt);
     this.commit(arr, { modalOpen: false, modalName: '', modalTags: [], selectedId: nt.id });
   };
   onModalKey = (e: React.KeyboardEvent<HTMLInputElement>) => {

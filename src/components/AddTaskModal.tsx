@@ -10,7 +10,6 @@ interface Props {
   noModalTags: boolean;
   modalSubmitStyle: string;
   closeModal: () => void;
-  stop: (e: React.SyntheticEvent) => void;
   onModalInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onModalKey: (e: React.KeyboardEvent<HTMLInputElement>) => void;
   toggleModalTag: (e: React.MouseEvent<HTMLButtonElement>) => void;
@@ -20,10 +19,9 @@ interface Props {
 export default function AddTaskModal(p: Props) {
   return (
     <div
-      onClick={p.closeModal}
       style={css('position:fixed;inset:0;background:rgba(31,29,27,.34);display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;z-index:60')}
     >
-      <div onClick={p.stop} style={css('width:min(430px,92vw);background:#fff;border-radius:16px;box-shadow:0 26px 64px rgba(31,29,27,.3);padding:24px 24px 20px')}>
+      <div style={css('width:min(430px,92vw);background:#fff;border-radius:16px;box-shadow:0 26px 64px rgba(31,29,27,.3);padding:24px 24px 20px')}>
         <h2 style={css("margin:0 0 3px;font:700 18px 'Public Sans',sans-serif;letter-spacing:-.01em;color:#22201d")}>New task</h2>
         <p style={css("margin:0 0 16px;font:400 13px 'Public Sans',sans-serif;color:#8f887c")}>Give your task a name.</p>
         <input

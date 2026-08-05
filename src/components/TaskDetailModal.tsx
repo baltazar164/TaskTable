@@ -6,7 +6,7 @@ interface Props {
   detailDescDraft: string;
   modalSubmitStyle: string;
   closeDetail: () => void;
-  stop: (e: React.SyntheticEvent) => void;
+  onDetailKey: (e: React.KeyboardEvent<HTMLDivElement>) => void;
   onDetailNameInput: (e: React.ChangeEvent<HTMLInputElement>) => void;
   onDetailDescInput: (e: React.ChangeEvent<HTMLTextAreaElement>) => void;
   saveDetail: () => void;
@@ -15,10 +15,10 @@ interface Props {
 export default function TaskDetailModal(p: Props) {
   return (
     <div
-      onClick={p.closeDetail}
+      onKeyDown={p.onDetailKey}
       style={css('position:fixed;inset:0;background:rgba(31,29,27,.34);display:flex;align-items:flex-start;justify-content:center;padding-top:15vh;z-index:60')}
     >
-      <div onClick={p.stop} style={css('width:min(430px,92vw);background:#fff;border-radius:16px;box-shadow:0 26px 64px rgba(31,29,27,.3);padding:24px 24px 20px')}>
+      <div style={css('width:min(430px,92vw);background:#fff;border-radius:16px;box-shadow:0 26px 64px rgba(31,29,27,.3);padding:24px 24px 20px')}>
         <h2 style={css("margin:0 0 3px;font:700 18px 'Public Sans',sans-serif;letter-spacing:-.01em;color:#22201d")}>Task details</h2>
         <p style={css("margin:0 0 16px;font:400 13px 'Public Sans',sans-serif;color:#8f887c")}>Edit the name and description.</p>
 

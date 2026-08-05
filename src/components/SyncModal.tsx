@@ -1,4 +1,5 @@
 import React from 'react';
+import type { MergeLogEntry } from '../types';
 import { css } from '../lib/css';
 
 interface Props {
@@ -13,6 +14,8 @@ interface Props {
   ghBranch: string;
   ghPath: string;
   autoSync: boolean;
+  dirty: boolean;
+  mergeLog: MergeLogEntry[];
   syncMsg: string;
   syncStatusColor: string;
   lastSyncLabel: string;
@@ -25,6 +28,7 @@ interface Props {
   disconnectGh: () => void;
   pullNow: () => void;
   pushNow: () => void;
+  discardLocalAndPull: () => void;
 }
 
 const fieldLabelStyle = css("display:block;font:600 10px 'JetBrains Mono',monospace;color:#b3ada2;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px");
@@ -96,6 +100,18 @@ export default function SyncModal(p: Props) {
           </div>
         </div>
 
+        {p.ghConnected && p.dirty && (
+          <div style={css('display:flex;gap:9px;align-items:flex-start;padding:11px 13px;background:#fdf4e7;border:1px solid #f0dcc0;border-radius:11px;margin-bottom:14px')}>
+            <span style={css('width:8px;height:8px;border-radius:50%;flex:none;background:#c1762a;margin-top:5px')}></span>
+            <div>
+              <div style={css("font:600 13px 'Public Sans',sans-serif;color:#7a4a12")}>Changes not on GitHub yet</div>
+              <div style={css("font:400 11.5px 'Public Sans',sans-serif;color:#9a7440;line-height:1.5")}>
+                They stay on this device and pulls won't overwrite them. Push when you're back online.
+              </div>
+            </div>
+          </div>
+        )}
+
         {p.syncMsg && (
           <p style={css(`margin:0 0 14px;font:600 12px 'JetBrains Mono',monospace;color:${p.syncStatusColor};line-height:1.5`)}>{p.syncMsg}</p>
         )}
@@ -113,8 +129,39 @@ export default function SyncModal(p: Props) {
           {p.ghConnected && (
             <button onClick={p.connectGh} title="Save an updated token" className="hv-bg" style={ghostBtnStyle}>Update token</button>
           )}
+          {p.ghConnected && p.dirty && (
+            <button
+              onClick={p.discardLocalAndPull}
+              title="Throw away this device's unpushed changes and take the GitHub copy"
+              className="hv-bg"
+              style={css("padding:9px 15px;background:#fff;border:1px solid #e8cdb0;border-radius:10px;font:600 12.5px 'Public Sans',sans-serif;color:#a2591b;cursor:pointer")}
+            >
+              Discard local &amp; pull
+            </button>
+          )}
           <span style={css("margin-left:auto;font:500 11px 'JetBrains Mono',monospace;color:#b3ada2")}>{p.lastSyncLabel}</span>
         </div>
+
+        {p.ghConnected && p.mergeLog.length > 0 && (
+          <details style={css('margin-top:14px;padding-top:14px;border-top:1px solid #efece5')}>
+            <summary style={css("cursor:pointer;font:600 11px 'JetBrains Mono',monospace;color:#b3ada2;text-transform:uppercase;letter-spacing:.06em")}>
+              Merge history ({p.mergeLog.length})
+            </summary>
+            <div style={css('margin-top:9px;max-height:150px;overflow:auto')}>
+              {p.mergeLog.map((m) => (
+                <div
+                  key={m.at}
+                  style={css("display:flex;justify-content:space-between;gap:12px;padding:4px 0;font:500 11.5px 'JetBrains Mono',monospace;color:#a49e93")}
+                >
+                  <span>{new Date(m.at).toLocaleString()}</span>
+                  <span style={css('color:#8f887c')}>
+                    {m.tasks} task{m.tasks === 1 ? '' : 's'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </details>
+        )}
 
         {p.ghConnected && (
           <div style={css('margin-top:14px;padding-top:14px;border-top:1px solid #efece5;display:flex;justify-content:space-between;align-items:center')}>

@@ -1,4 +1,5 @@
-import type { Task, TagInfo, GhConfig, SavedFilter } from './types';
+import type { Task, TagInfo, GhConfig, SavedFilter, Tombstones, MergeLogEntry } from './types';
+import { emptyTombstones, normTombstones } from './merge';
 
 // Keys are shared with the legacy single-file app so existing data survives.
 const KEYS = {
@@ -9,7 +10,14 @@ const KEYS = {
   ghToken: 'ptm.gh.token',
   ghAuto: 'ptm.gh.auto',
   ghLastSync: 'ptm.gh.lastsync',
+  ghDirty: 'ptm.gh.dirty',
+  deleted: 'ptm.deleted.v1',
+  orderUpdated: 'ptm.order.updated',
+  mergeLog: 'ptm.gh.mergelog',
 };
+
+/** Merge history is a local diary of this device, capped so it can't grow forever. */
+const MERGE_LOG_MAX = 50;
 
 const DEFAULT_GH_CONFIG: GhConfig = { owner: 'baltazar164', repo: 'TaskTable-data', branch: 'main', path: 'tasks.json' };
 
@@ -92,6 +100,44 @@ export function loadLastSync(): string {
 
 export function saveLastSync(iso: string): void {
   write(KEYS.ghLastSync, iso);
+}
+
+export function loadTombstones(): Tombstones {
+  const raw = readJson<unknown>(KEYS.deleted);
+  return raw ? normTombstones(raw) : emptyTombstones();
+}
+
+export function saveTombstones(t: Tombstones): void {
+  write(KEYS.deleted, JSON.stringify(t));
+}
+
+export function loadOrderUpdatedAt(): string {
+  return localStorage.getItem(KEYS.orderUpdated) || '';
+}
+
+export function saveOrderUpdatedAt(iso: string): void {
+  write(KEYS.orderUpdated, iso);
+}
+
+export function loadMergeLog(): MergeLogEntry[] {
+  const raw = readJson<MergeLogEntry[]>(KEYS.mergeLog);
+  return Array.isArray(raw) ? raw : [];
+}
+
+/** Prepend one merge to the local history and return the trimmed list. */
+export function addMergeLog(entry: MergeLogEntry): MergeLogEntry[] {
+  const list = [entry, ...loadMergeLog()].slice(0, MERGE_LOG_MAX);
+  write(KEYS.mergeLog, JSON.stringify(list));
+  return list;
+}
+
+/** True when local edits have not made it to GitHub yet (offline, failed push, …). */
+export function loadDirty(): boolean {
+  return localStorage.getItem(KEYS.ghDirty) === '1';
+}
+
+export function saveDirty(on: boolean): void {
+  write(KEYS.ghDirty, on ? '1' : '0');
 }
 
 export function uid(): string {

@@ -7,11 +7,14 @@ export interface Task {
   tags: string[];
   status: TaskStatus;
   description?: string;
+  /** ISO time of the last edit. Drives merging: the newer side of a conflict wins. */
+  updatedAt?: string;
 }
 
 export interface TagInfo {
   name: string;
   archived: boolean;
+  updatedAt?: string;
 }
 
 /** A captured filter combination (tag filters + search text) the user can re-apply. */
@@ -21,6 +24,33 @@ export interface SavedFilter {
   tags: string[];
   exclude: string[];
   search: string;
+  updatedAt?: string;
+}
+
+/**
+ * Deletion records (id/name → ISO time). Without these, anything deleted here
+ * would come straight back from another device's copy on the next merge.
+ */
+export interface Tombstones {
+  tasks: Record<string, string>;
+  tags: Record<string, string>;
+  filters: Record<string, string>;
+}
+
+/** Everything that travels to GitHub and takes part in a merge. */
+export interface SyncData {
+  tasks: Task[];
+  tags: TagInfo[];
+  savedFilters: SavedFilter[];
+  deleted: Tombstones;
+  /** ISO time the task order last changed — the side that reordered later wins. */
+  orderUpdatedAt: string;
+}
+
+/** One line of the local merge history: when, and how many tasks it touched. */
+export interface MergeLogEntry {
+  at: string;
+  tasks: number;
 }
 
 export interface GhConfig {

@@ -1,7 +1,21 @@
 import React from 'react';
-import type { Task, TagInfo, SavedFilter, GhConfig, TagColor, RowVM, TagFilterRowVM, SavedChipVM, ModalTagChipVM } from './types';
+import type {
+  Task,
+  TagInfo,
+  SavedFilter,
+  GhConfig,
+  TagColor,
+  RowVM,
+  TagFilterRowVM,
+  SavedChipVM,
+  ModalTagChipVM,
+  Tombstones,
+  SyncData,
+  MergeLogEntry,
+} from './types';
 import * as store from './storage';
 import { normStatus, normTasks, nextStatus } from './status';
+import { mergeSync, stampTasks, stampTags, stampFilters, normTombstones } from './merge';
 import { apiUrl, ghHeaders, decodeContent, encodeContent, diagnose404 } from './github';
 import { css } from './lib/css';
 import TaskRow from './components/TaskRow';
@@ -31,6 +45,11 @@ const PALETTE: TagColor[] = [
   { fg: '#5f7d6a', bg: '#ecf1ec', br: '#cfddd2' }, // sage
 ];
 
+/** "Saved to GitHub." → "Saved to GitHub — merged 3 tasks from another device." */
+function mergeNote(prefix: string, merged: number): string {
+  return merged ? `${prefix} — merged ${merged} task${merged === 1 ? '' : 's'} from another device.` : prefix + '.';
+}
+
 interface AppState {
   tasks: Task[];
   tags: TagInfo[];
@@ -59,6 +78,9 @@ interface AppState {
   lastSync: string;
   syncStatus: '' | 'busy' | 'ok' | 'error';
   syncMsg: string;
+  /** Local edits that have not reached GitHub yet — a pull must not silently drop them. */
+  dirty: boolean;
+  mergeLog: MergeLogEntry[];
   narrow: boolean;
   detailOpen: boolean;
   detailId: string | null;
@@ -72,20 +94,32 @@ export default class App extends React.Component<Record<string, never>, AppState
   private _drag: { id: string } | null = null;
   private _pushT: ReturnType<typeof setTimeout> | undefined;
   private _applyingRemote = false;
+  /** Bumped on every local edit so a push only clears `dirty` if nothing changed meanwhile. */
+  private _editSeq = 0;
+  private _tombstones: Tombstones = store.loadTombstones();
+  private _orderUpdatedAt: string = store.loadOrderUpdatedAt();
+  /** Task order before the current drag, so dropping can tell whether anything moved. */
+  private _dragOrder: Task[] = [];
+  /** Nothing was ever stored here — the list on screen is the demo seed, not real data. */
+  private _freshInstall = false;
   private _onResize: () => void;
+  private _onOnline: () => void;
 
   constructor(props: Record<string, never>) {
     super(props);
     const loaded = store.loadTasks();
+    // The demo list is stamped like a normal edit; tasks stored by an older version stay
+    // unstamped on purpose, since they really are older than anything from another device.
+    const seeded = new Date().toISOString();
     const tasks: Task[] = loaded
       ? normTasks(loaded)
       : [
-          { id: store.uid(), name: 'Draft Q3 planning doc', tags: ['work'], status: 'doing' },
-          { id: store.uid(), name: 'Reply to landlord email', tags: ['home'], status: 'todo' },
-          { id: store.uid(), name: 'Book dentist appointment', tags: ['home', 'errand'], status: 'todo' },
-          { id: store.uid(), name: 'Review pull request #482', tags: ['work'], status: 'doing' },
-          { id: store.uid(), name: 'Renew gym membership', tags: ['errand'], status: 'done' },
-          { id: store.uid(), name: 'Plan weekend hike', tags: ['personal'], status: 'todo' },
+          { id: store.uid(), name: 'Draft Q3 planning doc', tags: ['work'], status: 'doing', updatedAt: seeded },
+          { id: store.uid(), name: 'Reply to landlord email', tags: ['home'], status: 'todo', updatedAt: seeded },
+          { id: store.uid(), name: 'Book dentist appointment', tags: ['home', 'errand'], status: 'todo', updatedAt: seeded },
+          { id: store.uid(), name: 'Review pull request #482', tags: ['work'], status: 'doing', updatedAt: seeded },
+          { id: store.uid(), name: 'Renew gym membership', tags: ['errand'], status: 'done', updatedAt: seeded },
+          { id: store.uid(), name: 'Plan weekend hike', tags: ['personal'], status: 'todo', updatedAt: seeded },
         ];
     const savedTags = store.loadTags();
     const tags = savedTags || [...new Set(tasks.flatMap((t) => t.tags))].map((name) => ({ name, archived: false }));
@@ -118,46 +152,103 @@ export default class App extends React.Component<Record<string, never>, AppState
       lastSync: store.loadLastSync(),
       syncStatus: '',
       syncMsg: '',
+      dirty: store.loadDirty(),
+      mergeLog: store.loadMergeLog(),
       narrow: typeof window !== 'undefined' && window.innerWidth < 560,
       detailOpen: false,
       detailId: null,
       detailNameDraft: '',
       detailDescDraft: '',
     };
+    this._freshInstall = !loaded;
     this._onResize = () => {
       const n = window.innerWidth < 560;
       if (n !== this.state.narrow) this.setState({ narrow: n });
+    };
+    // Back online after a failed push? Retry it instead of waiting for the next edit.
+    this._onOnline = () => {
+      if (this.state.dirty && this.state.autoSync && this.state.ghToken) this.push(true);
     };
   }
 
   componentDidMount() {
     window.addEventListener('resize', this._onResize);
+    window.addEventListener('online', this._onOnline);
     if (this.state.ghToken) this.pull();
   }
 
   componentWillUnmount() {
     window.removeEventListener('resize', this._onResize);
+    window.removeEventListener('online', this._onOnline);
     clearTimeout(this._pushT);
   }
 
-  saveTags(tags: TagInfo[]) {
-    store.saveTags(tags);
-    this.scheduleAutoPush();
+  /** Record what disappeared, so a merge can't bring it back from the other device. */
+  private bury(kind: keyof Tombstones, gone: Record<string, string>) {
+    if (!Object.keys(gone).length) return;
+    this._tombstones = { ...this._tombstones, [kind]: { ...this._tombstones[kind], ...gone } };
+    store.saveTombstones(this._tombstones);
   }
 
-  save(tasks: Task[]) {
-    store.saveTasks(tasks);
+  /**
+   * Every local write goes through save/saveTags/saveFilters, which is where edits get
+   * their `updatedAt` and deletions get their tombstone. They return the stamped list —
+   * callers must put *that* into state, not the array they passed in.
+   */
+  saveTags(tags: TagInfo[]): TagInfo[] {
+    if (this._applyingRemote) {
+      store.saveTags(tags);
+      return tags;
+    }
+    const r = stampTags(this.state.tags, tags, new Date().toISOString());
+    this.bury('tags', r.deleted);
+    store.saveTags(r.list);
     this.scheduleAutoPush();
+    return r.list;
+  }
+
+  saveFilters(list: SavedFilter[]): SavedFilter[] {
+    if (this._applyingRemote) {
+      store.saveSavedFilters(list);
+      return list;
+    }
+    const r = stampFilters(this.state.savedFilters, list, new Date().toISOString());
+    this.bury('filters', r.deleted);
+    store.saveSavedFilters(r.list);
+    this.scheduleAutoPush();
+    return r.list;
+  }
+
+  /** `prev` is only passed by the drag handler, which has already put the new order in state. */
+  save(tasks: Task[], prev?: Task[]): Task[] {
+    if (this._applyingRemote) {
+      store.saveTasks(tasks);
+      return tasks;
+    }
+    this._freshInstall = false;
+    const now = new Date().toISOString();
+    const r = stampTasks(prev || this.state.tasks, tasks, now);
+    this.bury('tasks', r.deleted);
+    if (r.orderChanged) {
+      this._orderUpdatedAt = now;
+      store.saveOrderUpdatedAt(now);
+    }
+    store.saveTasks(r.list);
+    this.scheduleAutoPush();
+    return r.list;
   }
 
   commit(tasks: Task[], extra?: Partial<AppState>) {
-    this.save(tasks);
-    this.setState(Object.assign({ tasks }, extra || {}) as Pick<AppState, 'tasks'>);
+    const stamped = this.save(tasks);
+    this.setState(Object.assign({ tasks: stamped }, extra || {}) as Pick<AppState, 'tasks'>);
   }
 
   // ---- GitHub sync ----
   scheduleAutoPush() {
     if (this._applyingRemote) return;
+    this._editSeq++;
+    store.saveDirty(true);
+    if (!this.state.dirty) this.setState({ dirty: true });
     if (!this.state.autoSync || !this.state.ghToken) return;
     clearTimeout(this._pushT);
     this._pushT = setTimeout(() => this.push(true), 1600);
@@ -189,7 +280,13 @@ export default class App extends React.Component<Record<string, never>, AppState
     this.setState({ ghToken: '', ghTokenDraft: '', ghSha: null, syncStatus: '', syncMsg: 'Disconnected from GitHub.' });
   };
 
-  async pull() {
+  /** `force` replaces local data with the GitHub copy even if local edits are still unpushed. */
+  discardLocalAndPull = () => {
+    if (!window.confirm('Replace this device’s tasks with the copy on GitHub? Local changes that were never pushed will be lost.')) return;
+    this.pull(true);
+  };
+
+  async pull(force?: boolean) {
     if (!this.state.ghToken) {
       this.setState({ syncStatus: 'error', syncMsg: 'Add a token and press Connect first.' });
       return;
@@ -210,25 +307,84 @@ export default class App extends React.Component<Record<string, never>, AppState
       }
       if (!res.ok) throw new Error('GitHub returned ' + res.status);
       const j = await res.json();
-      const text = decodeContent(j.content || '');
-      const data = JSON.parse(text);
-      const tasks: Task[] = normTasks(data.tasks);
-      const tags: TagInfo[] = Array.isArray(data.tags)
-        ? data.tags
-        : [...new Set(tasks.flatMap((t) => t.tags || []))].map((name) => ({ name, archived: false }));
-      const savedFilters: SavedFilter[] = Array.isArray(data.savedFilters) ? data.savedFilters : this.state.savedFilters;
-      this._applyingRemote = true;
-      store.saveTasks(tasks);
-      store.saveTags(tags);
-      store.saveSavedFilters(savedFilters);
-      const now = new Date().toISOString();
-      store.saveLastSync(now);
-      this.setState({ tasks, tags, savedFilters, ghSha: j.sha, syncStatus: 'ok', syncMsg: 'Pulled the latest from GitHub.', lastSync: now, selectedId: null, tagInputId: null });
-      this._applyingRemote = false;
+      const remote = this.parseRemote(j.content);
+      // A brand-new install shows demo tasks that were never real. Merging them would
+      // push the demo list onto every other device, so the first pull just takes GitHub's.
+      if (force || (this._freshInstall && !this.state.dirty)) {
+        const wasFresh = this._freshInstall;
+        this._freshInstall = false;
+        this.applySync(remote, j.sha, false, 0);
+        this.setState({ syncStatus: 'ok', syncMsg: wasFresh ? 'Loaded your tasks from GitHub.' : 'Replaced this device’s data with the GitHub copy.' });
+        return;
+      }
+      const m = mergeSync(this.localSyncData(), remote, Date.now());
+      this.applySync(m.data, j.sha, m.needsPush, m.changedTasks);
+      this.setState({ syncStatus: 'ok', syncMsg: mergeNote('Pulled from GitHub', m.changedTasks) + (m.needsPush ? ' Sending this device’s side back…' : '') });
+      if (m.needsPush && this.state.autoSync) this.push(true);
     } catch (err) {
       this._applyingRemote = false;
       this.setState({ syncStatus: 'error', syncMsg: 'Pull failed: ' + (err as Error).message });
     }
+  }
+
+  private localSyncData(): SyncData {
+    return {
+      tasks: this.state.tasks,
+      tags: this.state.tags,
+      savedFilters: this.state.savedFilters,
+      deleted: this._tombstones,
+      orderUpdatedAt: this._orderUpdatedAt,
+    };
+  }
+
+  /** Decode a GitHub contents payload into mergeable data. Files from v2 simply lack timestamps. */
+  private parseRemote(content: string): SyncData {
+    const raw = JSON.parse(decodeContent(content || '')) as {
+      tasks?: unknown;
+      tags?: unknown;
+      savedFilters?: unknown;
+      deleted?: unknown;
+      orderUpdatedAt?: unknown;
+    };
+    const tasks = normTasks(raw.tasks);
+    return {
+      tasks,
+      tags: Array.isArray(raw.tags)
+        ? (raw.tags as TagInfo[])
+        : [...new Set(tasks.flatMap((t) => t.tags || []))].map((name) => ({ name, archived: false })),
+      savedFilters: Array.isArray(raw.savedFilters) ? (raw.savedFilters as SavedFilter[]) : [],
+      deleted: normTombstones(raw.deleted),
+      orderUpdatedAt: typeof raw.orderUpdatedAt === 'string' ? raw.orderUpdatedAt : '',
+    };
+  }
+
+  /** Write merged data everywhere at once, without it counting as a local edit. */
+  private applySync(data: SyncData, sha: string | null, dirty: boolean, changedTasks: number) {
+    this._applyingRemote = true;
+    store.saveTasks(data.tasks);
+    store.saveTags(data.tags);
+    store.saveSavedFilters(data.savedFilters);
+    store.saveTombstones(data.deleted);
+    store.saveOrderUpdatedAt(data.orderUpdatedAt);
+    this._tombstones = data.deleted;
+    this._orderUpdatedAt = data.orderUpdatedAt;
+    const now = new Date().toISOString();
+    store.saveLastSync(now);
+    store.saveDirty(dirty);
+    const mergeLog = changedTasks > 0 ? store.addMergeLog({ at: now, tasks: changedTasks }) : this.state.mergeLog;
+    const alive = new Set(data.tasks.map((t) => t.id));
+    this.setState({
+      tasks: data.tasks,
+      tags: data.tags,
+      savedFilters: data.savedFilters,
+      ghSha: sha,
+      lastSync: now,
+      dirty,
+      mergeLog,
+      selectedId: this.state.selectedId && alive.has(this.state.selectedId) ? this.state.selectedId : null,
+      tagInputId: this.state.tagInputId && alive.has(this.state.tagInputId) ? this.state.tagInputId : null,
+    });
+    this._applyingRemote = false;
   }
 
   async push(silent?: boolean) {
@@ -237,47 +393,89 @@ export default class App extends React.Component<Record<string, never>, AppState
       return;
     }
     this.setState({ syncStatus: 'busy', syncMsg: silent ? 'Auto-syncing…' : 'Pushing to GitHub…' });
+    const seq = this._editSeq;
     try {
       const c = this.state.ghConfig;
       const headers = ghHeaders(this.state.ghToken);
       let sha = this.state.ghSha;
+      let remote: SyncData | null = null;
       try {
         const head = await fetch(`${apiUrl(c)}?ref=${encodeURIComponent(c.branch)}&t=${Date.now()}`, { headers, cache: 'no-store' });
-        if (head.ok) sha = (await head.json()).sha;
-        else if (head.status === 404) sha = null;
+        if (head.ok) {
+          const hj = await head.json();
+          sha = hj.sha;
+          remote = this.parseRemote(hj.content);
+        } else if (head.status === 404) sha = null;
       } catch {
         /* keep previous sha */
       }
-      const data = { version: 2, exportedAt: new Date().toISOString(), tasks: this.state.tasks, tags: this.state.tags, savedFilters: this.state.savedFilters };
-      const body: { message: string; content: string; branch: string; sha?: string } = {
-        message: `Update tasks — ${new Date().toLocaleString()}`,
-        content: encodeContent(data),
-        branch: c.branch,
-      };
-      if (sha) body.sha = sha;
-      const res = await fetch(apiUrl(c), { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      if (res.status === 401) throw new Error('token rejected (401). Regenerate the token and reconnect.');
-      if (res.status === 404) throw new Error(await diagnose404(c, this.state.ghToken));
-      if (res.status === 403) {
-        let m = '';
-        try {
-          m = (await res.json()).message || '';
-        } catch {
-          /* no body */
-        }
-        throw new Error(
-          'token can see the repo but can’t write to it. Fix: on the token at github.com/settings/tokens, set Permissions → Contents = Read and write (not Read-only), Update, then press “Update token” here.' +
-            (m ? ' [GitHub: ' + m + ']' : ''),
-        );
+      // Merge before writing: sending raw local data would erase whatever another
+      // device put on GitHub since this one last synced.
+      let outgoing = this.localSyncData();
+      let merged = 0;
+      let upToDate = false;
+      if (remote) {
+        const m = mergeSync(outgoing, remote, Date.now());
+        outgoing = m.data;
+        merged = m.changedTasks;
+        upToDate = !m.needsPush;
+        // Adopt the merge locally right away — still dirty until the write lands.
+        this.applySync(outgoing, sha, true, merged);
       }
-      if (res.status === 422) throw new Error('branch “' + c.branch + '” may not exist in the repo. Check the Branch field (new empty repos have none yet).');
-      if (!res.ok) throw new Error('GitHub returned ' + res.status);
-      const j = await res.json();
+      let newSha = sha;
+      if (!upToDate) {
+        const data = {
+          version: 3,
+          exportedAt: new Date().toISOString(),
+          tasks: outgoing.tasks,
+          tags: outgoing.tags,
+          savedFilters: outgoing.savedFilters,
+          deleted: outgoing.deleted,
+          orderUpdatedAt: outgoing.orderUpdatedAt,
+        };
+        const body: { message: string; content: string; branch: string; sha?: string } = {
+          message: `Update tasks — ${new Date().toLocaleString()}`,
+          content: encodeContent(data),
+          branch: c.branch,
+        };
+        if (sha) body.sha = sha;
+        const res = await fetch(apiUrl(c), { method: 'PUT', headers: { ...headers, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        if (res.status === 401) throw new Error('token rejected (401). Regenerate the token and reconnect.');
+        if (res.status === 404) throw new Error(await diagnose404(c, this.state.ghToken));
+        if (res.status === 403) {
+          let m = '';
+          try {
+            m = (await res.json()).message || '';
+          } catch {
+            /* no body */
+          }
+          throw new Error(
+            'token can see the repo but can’t write to it. Fix: on the token at github.com/settings/tokens, set Permissions → Contents = Read and write (not Read-only), Update, then press “Update token” here.' +
+              (m ? ' [GitHub: ' + m + ']' : ''),
+          );
+        }
+        if (res.status === 422) throw new Error('branch “' + c.branch + '” may not exist in the repo. Check the Branch field (new empty repos have none yet).');
+        if (!res.ok) throw new Error('GitHub returned ' + res.status);
+        const j = await res.json();
+        newSha = (j.content && j.content.sha) || null;
+      }
       const now = new Date().toISOString();
       store.saveLastSync(now);
-      this.setState({ ghSha: j.content && j.content.sha, syncStatus: 'ok', syncMsg: 'Saved to GitHub.', lastSync: now });
+      // Edits made while this request was in flight are still unpushed.
+      const settled = this._editSeq === seq;
+      if (settled) store.saveDirty(false);
+      this.setState({
+        ghSha: newSha,
+        syncStatus: 'ok',
+        syncMsg: mergeNote(upToDate ? 'GitHub already had everything' : 'Saved to GitHub', merged),
+        lastSync: now,
+        dirty: !settled,
+      });
     } catch (err) {
-      this.setState({ syncStatus: 'error', syncMsg: 'Push failed: ' + (err as Error).message });
+      this.setState({
+        syncStatus: 'error',
+        syncMsg: 'Push failed: ' + (err as Error).message + ' Your changes are still here and will be kept until a push succeeds.',
+      });
     }
   }
 
@@ -335,10 +533,8 @@ export default class App extends React.Component<Record<string, never>, AppState
     const name = this.state.saveFilterName.trim();
     if (!name) return;
     const entry: SavedFilter = { id: store.uid(), name, tags: [...this.state.filterTags], exclude: [...this.state.excludeTags], search: this.state.search };
-    const list = [...this.state.savedFilters, entry];
-    store.saveSavedFilters(list);
+    const list = this.saveFilters([...this.state.savedFilters, entry]);
     this.setState({ savedFilters: list, saveFilterOpen: false, saveFilterName: '' });
-    this.scheduleAutoPush();
   };
   onApplySavedFilter = (e: React.MouseEvent<HTMLButtonElement>) => {
     const id = e.currentTarget.dataset.id;
@@ -358,10 +554,8 @@ export default class App extends React.Component<Record<string, never>, AppState
   onDeleteSavedFilter = (e: React.MouseEvent<HTMLSpanElement>) => {
     e.stopPropagation();
     const id = e.currentTarget.dataset.id;
-    const list = this.state.savedFilters.filter((f) => f.id !== id);
-    store.saveSavedFilters(list);
+    const list = this.saveFilters(this.state.savedFilters.filter((f) => f.id !== id));
     this.setState({ savedFilters: list });
-    this.scheduleAutoPush();
   };
 
   // Checkbox click cycles the status forward: To do → Doing → Done → To do.
@@ -421,6 +615,9 @@ export default class App extends React.Component<Record<string, never>, AppState
     this.setState({ detailOpen: true, detailId: id, detailNameDraft: t.name, detailDescDraft: t.description || '' });
   };
   closeDetail = () => this.setState({ detailOpen: false, detailId: null });
+  onDetailKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key === 'Escape') this.closeDetail();
+  };
   onDetailNameInput = (e: React.ChangeEvent<HTMLInputElement>) => this.setState({ detailNameDraft: e.target.value });
   onDetailDescInput = (e: React.ChangeEvent<HTMLTextAreaElement>) => this.setState({ detailDescDraft: e.target.value });
   saveDetail = () => {
@@ -461,11 +658,9 @@ export default class App extends React.Component<Record<string, never>, AppState
     if (!name) return;
     let reg = this.state.tags;
     if (!reg.some((t) => t.name === name)) {
-      reg = [...reg, { name, archived: false }];
-      this.saveTags(reg);
+      reg = this.saveTags([...reg, { name, archived: false }]);
     }
-    const tasks = this.state.tasks.map((t) => (t.id === id && !t.tags.includes(name) ? { ...t, tags: [...t.tags, name] } : t));
-    this.save(tasks);
+    const tasks = this.save(this.state.tasks.map((t) => (t.id === id && !t.tags.includes(name) ? { ...t, tags: [...t.tags, name] } : t)));
     this.setState({ tasks, tags: reg, tagQuery: '' });
   }
   onTagInputKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -496,7 +691,10 @@ export default class App extends React.Component<Record<string, never>, AppState
 
   // ---- backup: export / import ----
   exportData = () => {
-    const data = { version: 2, exportedAt: new Date().toISOString(), tasks: this.state.tasks, tags: this.state.tags, savedFilters: this.state.savedFilters };
+    // Same shape as the file on GitHub, tombstones included — a backup that dropped them
+    // would resurrect deleted tasks the first time it was imported and merged.
+    const local = this.localSyncData();
+    const data = { version: 3, exportedAt: new Date().toISOString(), ...local };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -524,10 +722,22 @@ export default class App extends React.Component<Record<string, never>, AppState
           ? data.tags
           : [...new Set(tasks.flatMap((t) => t.tags || []))].map((name) => ({ name, archived: false }));
         const savedFilters: SavedFilter[] = Array.isArray(data.savedFilters) ? data.savedFilters : this.state.savedFilters;
-        this.save(tasks);
-        this.saveTags(tags);
-        store.saveSavedFilters(savedFilters);
-        this.setState({ tasks, tags, savedFilters, selectedId: null, tagInputId: null, tagsOpen: false });
+        // An import replaces the list, so it goes through the normal save path: changed
+        // entries get a fresh timestamp and everything it drops gets a tombstone. That's
+        // what makes the replacement survive the next merge instead of being undone by it.
+        // Deletions recorded in the backup are kept too, so they stay dead.
+        const fromFile = normTombstones(data.deleted);
+        this.bury('tasks', fromFile.tasks);
+        this.bury('tags', fromFile.tags);
+        this.bury('filters', fromFile.filters);
+        this.setState({
+          tasks: this.save(tasks),
+          tags: this.saveTags(tags),
+          savedFilters: this.saveFilters(savedFilters),
+          selectedId: null,
+          tagInputId: null,
+          tagsOpen: false,
+        });
       } catch {
         window.alert("Could not read that file — make sure it's a backup exported from this app.");
       }
@@ -547,9 +757,7 @@ export default class App extends React.Component<Record<string, never>, AppState
       this.setState({ newTagName: '' });
       return;
     }
-    const reg = [...this.state.tags, { name: v, archived: false }];
-    this.saveTags(reg);
-    this.setState({ tags: reg, newTagName: '' });
+    this.setState({ tags: this.saveTags([...this.state.tags, { name: v, archived: false }]), newTagName: '' });
   };
   onNewTagKey = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
@@ -559,17 +767,13 @@ export default class App extends React.Component<Record<string, never>, AppState
   };
   toggleArchive = (e: React.MouseEvent<HTMLButtonElement>) => {
     const name = e.currentTarget.dataset.tag;
-    const reg = this.state.tags.map((t) => (t.name === name ? { ...t, archived: !t.archived } : t));
-    this.saveTags(reg);
-    this.setState({ tags: reg });
+    this.setState({ tags: this.saveTags(this.state.tags.map((t) => (t.name === name ? { ...t, archived: !t.archived } : t))) });
   };
   deleteTag = (e: React.MouseEvent<HTMLButtonElement>) => {
     const name = e.currentTarget.dataset.tag;
-    const reg = this.state.tags.filter((t) => t.name !== name);
-    const tasks = this.state.tasks.map((t) => ({ ...t, tags: t.tags.filter((x) => x !== name) }));
-    this.saveTags(reg);
-    this.save(tasks);
-    this.setState({ tags: reg, tasks });
+    const tags = this.saveTags(this.state.tags.filter((t) => t.name !== name));
+    const tasks = this.save(this.state.tasks.map((t) => ({ ...t, tags: t.tags.filter((x) => x !== name) })));
+    this.setState({ tags, tasks });
   };
 
   // ---- drag reorder (pointer, works on touch + mouse) ----
@@ -587,6 +791,8 @@ export default class App extends React.Component<Record<string, never>, AppState
     if (!id) return;
     e.preventDefault();
     this._drag = { id };
+    // reorder() only touches state; the drop compares against this to see if anything moved.
+    this._dragOrder = this.state.tasks;
     this.setState({ dragId: id });
     document.body.style.userSelect = 'none';
     document.body.style.cursor = 'grabbing';
@@ -612,8 +818,7 @@ export default class App extends React.Component<Record<string, never>, AppState
   };
   onGripUp = () => {
     this._drag = null;
-    this.save(this.state.tasks);
-    this.setState({ dragId: null });
+    this.setState({ tasks: this.save(this.state.tasks, this._dragOrder), dragId: null });
     document.body.style.userSelect = '';
     document.body.style.cursor = '';
     window.removeEventListener('pointermove', this.onGripMove);
@@ -837,9 +1042,13 @@ export default class App extends React.Component<Record<string, never>, AppState
         };
       });
     const modalSubmitStyle = `padding:9px 18px;background:${accent};color:#fff;border:none;border-radius:10px;font:600 13px 'Public Sans',sans-serif;cursor:pointer`;
-    const syncDotStyle = `width:8px;height:8px;border-radius:50%;flex:none;background:${this.state.ghToken ? '#7d8b4a' : '#cbc6bb'}`;
+    // Amber dot = connected, but this device holds edits GitHub hasn't seen yet.
+    const syncDotColor = !this.state.ghToken ? '#cbc6bb' : this.state.dirty ? '#c1762a' : '#7d8b4a';
+    const syncDotStyle = `width:8px;height:8px;border-radius:50%;flex:none;background:${syncDotColor}`;
     const syncStatusColor = this.state.syncStatus === 'error' ? '#b0432f' : this.state.syncStatus === 'ok' ? '#7d8b4a' : '#a49e93';
-    const lastSyncLabel = this.state.lastSync ? 'Last synced ' + new Date(this.state.lastSync).toLocaleString() : 'Not synced yet';
+    const lastSyncLabel =
+      (this.state.lastSync ? 'Last synced ' + new Date(this.state.lastSync).toLocaleString() : 'Not synced yet') +
+      (this.state.dirty ? ' · not pushed yet' : '');
     const emptyLabel = q
       ? 'No tasks match your search.'
       : filterCount
@@ -974,6 +1183,8 @@ export default class App extends React.Component<Record<string, never>, AppState
             ghBranch={this.state.ghConfig.branch}
             ghPath={this.state.ghConfig.path}
             autoSync={this.state.autoSync}
+            dirty={this.state.dirty}
+            mergeLog={this.state.mergeLog}
             syncMsg={this.state.syncMsg}
             syncStatusColor={syncStatusColor}
             lastSyncLabel={lastSyncLabel}
@@ -986,6 +1197,7 @@ export default class App extends React.Component<Record<string, never>, AppState
             disconnectGh={this.disconnectGh}
             pullNow={() => this.pull()}
             pushNow={() => this.push(false)}
+            discardLocalAndPull={this.discardLocalAndPull}
           />
         )}
 
@@ -1015,7 +1227,6 @@ export default class App extends React.Component<Record<string, never>, AppState
             noModalTags={modalTagChips.length === 0}
             modalSubmitStyle={modalSubmitStyle}
             closeModal={this.closeModal}
-            stop={this.stop}
             onModalInput={this.onModalInput}
             onModalKey={this.onModalKey}
             toggleModalTag={this.toggleModalTag}
@@ -1029,7 +1240,7 @@ export default class App extends React.Component<Record<string, never>, AppState
             detailDescDraft={this.state.detailDescDraft}
             modalSubmitStyle={modalSubmitStyle}
             closeDetail={this.closeDetail}
-            stop={this.stop}
+            onDetailKey={this.onDetailKey}
             onDetailNameInput={this.onDetailNameInput}
             onDetailDescInput={this.onDetailDescInput}
             saveDetail={this.saveDetail}
